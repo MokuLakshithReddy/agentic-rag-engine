@@ -1,7 +1,7 @@
 """
-Base Tool definition with strict execution timeouts and budget auditing.
-Enforces typed schemas, concurrent timeout execution, input sanitization,
-structured error handling, and audit telemetry.
+Base Tool definition with genuinely bounded execution timeouts.
+Uses a shared, non-blocking persistent ThreadPoolExecutor so that timeout
+exceptions return immediately without triggering wait=True shutdown blocking.
 """
 
 from abc import ABC, abstractmethod
@@ -20,8 +20,19 @@ class BaseToolInput(BaseModel):
 class BaseTool(ABC):
     """
     Abstract base tool class.
-    All registered tools inherit from BaseTool and execute under a hard timeout.
+    Executes operations under a hard, non-blocking timeout guarantee.
     """
+
+    _shared_executor: Optional[concurrent.futures.ThreadPoolExecutor] = None
+
+    @classmethod
+    def _get_executor(cls) -> concurrent.futures.ThreadPoolExecutor:
+        if cls._shared_executor is None:
+            cls._shared_executor = concurrent.futures.ThreadPoolExecutor(
+                max_workers=8,
+                thread_name_prefix="rag_tool_worker"
+            )
+        return cls._shared_executor
 
     def __init__(self, name: str, description: str, timeout_sec: float = 5.0):
         self.name = name
@@ -35,7 +46,8 @@ class BaseTool(ABC):
 
     def run(self, **kwargs) -> Dict[str, Any]:
         """
-        Executes tool wrapped in a concurrent timeout worker, timing, and error handling.
+        Executes the tool with immediate unblocked return upon timeout expiration.
+        Avoids the executor context manager shutdown(wait=True) deadlock.
         """
         start_time = time.time()
         record = ToolCallRecord(
@@ -43,11 +55,11 @@ class BaseTool(ABC):
             query_input=str(kwargs.get("query", kwargs.get("subqueries", "")))[:200]
         )
 
-        try:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(self._execute, **kwargs)
-                results = future.result(timeout=self.timeout_sec)
+        executor = self._get_executor()
+        future = executor.submit(self._execute, **kwargs)
 
+        try:
+            results = future.result(timeout=self.timeout_sec)
             elapsed_ms = (time.time() - start_time) * 1000.0
             record.execution_time_ms = round(elapsed_ms, 2)
             record.success = True
@@ -58,10 +70,11 @@ class BaseTool(ABC):
                 "record": record
             }
         except concurrent.futures.TimeoutError:
+            future.cancel()
             elapsed_ms = (time.time() - start_time) * 1000.0
             record.execution_time_ms = round(elapsed_ms, 2)
             record.success = False
-            record.error_message = f"Tool execution timed out after {self.timeout_sec}s."
+            record.error_message = f"Tool execution hard timed out after {self.timeout_sec}s."
             record.results_count = 0
             return {
                 "success": False,

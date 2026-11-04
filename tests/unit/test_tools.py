@@ -27,3 +27,26 @@ def test_unauthorized_tool_execution():
     assert result["success"] is False
     assert "not registered" in result["error"]
 
+
+def test_hard_tool_timeout_enforcement():
+    import time
+    from src.tools.base import BaseTool
+    from src.state.state import EvidenceChunk
+
+    class SlowTool(BaseTool):
+        def __init__(self):
+            super().__init__(name="slow_tool", description="Test slow tool", timeout_sec=0.2)
+
+        def _execute(self, **kwargs):
+            time.sleep(1.0)
+            return [EvidenceChunk(chunk_id="slow#1", doc_id="slow", content="late")]
+
+    slow = SlowTool()
+    start = time.time()
+    res = slow.run(query="test")
+    elapsed = time.time() - start
+
+    assert res["success"] is False
+    assert "timed out" in res["error"]
+    assert elapsed < 0.6  # Must return immediately, without waiting for the 1.0s sleep
+

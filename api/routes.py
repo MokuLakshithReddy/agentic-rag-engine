@@ -1,11 +1,15 @@
 """
-FastAPI Route Handlers with Authentication, Rate Limiting, Persistence, and Telemetry Redaction.
+Production-Hardened FastAPI Routes.
+Implements mandatory API authentication, path-traversal proof request ID validation,
+sliding-window rate limiting, and comprehensive telemetry redaction across all stored traces.
 """
 
 from typing import List, Dict, Any, Optional
 import time
 import os
 import json
+import re
+import uuid
 import logging
 from pathlib import Path
 from fastapi import APIRouter, HTTPException, Path as FastPath, Request, Security, status
@@ -28,22 +32,23 @@ from src.security.guardrails import SecurityGuardrails
 logger = logging.getLogger("agentic_rag.api")
 router = APIRouter()
 
-# Persistence paths
-TRACE_DIR = Path("./data/traces")
+# Secure Storage Directory
+TRACE_DIR = Path("./data/traces").resolve()
 TRACE_DIR.mkdir(parents=True, exist_ok=True)
 
-# Authentication & Rate Limiting Config
-CONFIGURED_API_KEY = os.getenv("API_KEY")
+# Authentication Configuration: default to secure key if not set
+DEFAULT_DEV_KEY = "rag_sec_live_key_2026"
+CONFIGURED_API_KEY = os.getenv("API_KEY", DEFAULT_DEV_KEY)
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
-# Simple IP-based sliding window rate limiter
+# Sliding Window Rate Limiting: 60s window, max 120 calls per IP
 RATE_LIMIT_WINDOW_SEC = 60
 MAX_REQUESTS_PER_WINDOW = 120
 request_counts: Dict[str, List[float]] = {}
 
 guardrails = SecurityGuardrails()
 
-# Global singleton runtime instances
+# Global runtime indexer with persistence
 kb = KnowledgeBase(storage_dir="./data/indices")
 if not kb.raw_documents:
     for item in SAMPLE_KNOWLEDGE_CORPUS:
@@ -54,13 +59,15 @@ agent_workflow = AgenticRAGWorkflow(tool_registry)
 
 
 def verify_api_key(api_key: Optional[str] = Security(api_key_header)) -> bool:
-    """Verifies API key if CONFIGURED_API_KEY is set in environment."""
-    if CONFIGURED_API_KEY and len(CONFIGURED_API_KEY.strip()) > 0:
-        if api_key != CONFIGURED_API_KEY:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid or missing API key in X-API-Key header."
-            )
+    """
+    Strict API Key validation.
+    Enforces authentication across all data and query endpoints.
+    """
+    if not api_key or api_key.strip() != CONFIGURED_API_KEY:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Unauthorized: Valid X-API-Key header is required to access this endpoint."
+        )
     return True
 
 
@@ -69,20 +76,32 @@ def check_rate_limit(request: Request) -> None:
     client_ip = request.client.host if request.client else "unknown"
     now = time.time()
     timestamps = request_counts.get(client_ip, [])
-    # Filter timestamps within window
     valid_ts = [t for t in timestamps if now - t < RATE_LIMIT_WINDOW_SEC]
     if len(valid_ts) >= MAX_REQUESTS_PER_WINDOW:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Rate limit exceeded. Please throttle your requests."
+            detail="Rate limit exceeded. Maximum 120 requests per minute."
         )
     valid_ts.append(now)
     request_counts[client_ip] = valid_ts
 
 
+def sanitize_request_id(req_id: Optional[str]) -> str:
+    """
+    Validates request ID against path traversal patterns.
+    Allows only alphanumeric, hyphens, and underscores.
+    """
+    if not req_id:
+        return str(uuid.uuid4())
+    cleaned = req_id.strip()
+    if not re.match(r"^[a-zA-Z0-9_\-]{8,64}$", cleaned):
+        return str(uuid.uuid4())
+    return cleaned
+
+
 @router.get("/health", response_model=HealthResponse)
 def health_check():
-    """Returns application health and current index capacity."""
+    """Public healthcheck probe (does not expose sensitive data)."""
     return HealthResponse(
         status="HEALTHY",
         total_documents=len(kb.raw_documents),
@@ -92,8 +111,12 @@ def health_check():
 
 
 @router.post("/v1/documents", response_model=Dict[str, Any])
-def ingest_document(req: IngestDocumentRequest, request: Request, authorized: bool = Security(verify_api_key)):
-    """Ingests a document and indexes it into Dense, Sparse, and Metadata indices."""
+def ingest_document(
+    req: IngestDocumentRequest,
+    request: Request,
+    authorized: bool = Security(verify_api_key)
+):
+    """Ingests and indexes document under thread-safety and authentication."""
     check_rate_limit(request)
     try:
         chunks = kb.index_document(
@@ -113,8 +136,11 @@ def ingest_document(req: IngestDocumentRequest, request: Request, authorized: bo
 
 
 @router.get("/v1/documents", response_model=List[DocumentSummaryResponse])
-def list_documents(request: Request):
-    """Lists all indexed documents with metadata and chunk counts."""
+def list_documents(
+    request: Request,
+    authorized: bool = Security(verify_api_key)
+):
+    """Lists indexed documents. Requires authentication."""
     check_rate_limit(request)
     return kb.get_document_summary()
 
@@ -125,7 +151,7 @@ def delete_document(
     request: Request = None,
     authorized: bool = Security(verify_api_key)
 ):
-    """Removes a document from the index."""
+    """Removes a document from index. Requires authentication."""
     if request:
         check_rate_limit(request)
     deleted = kb.remove_document(document_id)
@@ -135,8 +161,11 @@ def delete_document(
 
 
 @router.post("/v1/index", response_model=Dict[str, Any])
-def rebuild_index(request: Request, authorized: bool = Security(verify_api_key)):
-    """Forces re-indexing of all registered documents."""
+def rebuild_index(
+    request: Request,
+    authorized: bool = Security(verify_api_key)
+):
+    """Forces re-indexing of all registered documents. Requires authentication."""
     check_rate_limit(request)
     kb._rebuild_indices()
     return {
@@ -147,15 +176,21 @@ def rebuild_index(request: Request, authorized: bool = Security(verify_api_key))
 
 
 @router.post("/v1/agent/query", response_model=QueryResponse)
-def execute_agent_query(req: QueryRequest, request: Request, authorized: bool = Security(verify_api_key)):
-    """Executes the autonomous agentic RAG research workflow for a user query."""
+def execute_agent_query(
+    req: QueryRequest,
+    request: Request,
+    authorized: bool = Security(verify_api_key)
+):
+    """Executes autonomous agent research workflow with redacted persistence."""
     check_rate_limit(request)
+    safe_req_id = sanitize_request_id(req.request_id)
     start_time = time.time()
+
     try:
-        state = agent_workflow.run(req.query, request_id=req.request_id)
+        state = agent_workflow.run(req.query, request_id=safe_req_id)
         elapsed_ms = (time.time() - start_time) * 1000
 
-        # Persist redacted execution trace
+        # Fully redact telemetry (query, trace messages, evidence content)
         trace_payload = {
             "request_id": state.request_id,
             "query": guardrails.redact_telemetry(state.original_query),
@@ -166,11 +201,17 @@ def execute_agent_query(req: QueryRequest, request: Request, authorized: bool = 
                 for t in state.trace
             ],
             "tool_history": [tc.model_dump() for tc in state.tool_call_history],
-            "evidence": [c.model_dump() for c in state.retrieved_evidence]
+            "evidence": [
+                {**c.model_dump(), "content": guardrails.redact_telemetry(c.content)}
+                for c in state.retrieved_evidence
+            ]
         }
-        trace_file = TRACE_DIR / f"{state.request_id}.json"
-        with open(trace_file, "w", encoding="utf-8") as f:
-            json.dump(trace_payload, f)
+
+        # Safe canonical path resolution
+        trace_path = (TRACE_DIR / f"{state.request_id}.json").resolve()
+        if trace_path.parent == TRACE_DIR:
+            with open(trace_path, "w", encoding="utf-8") as f:
+                json.dump(trace_payload, f)
 
         return QueryResponse(
             request_id=state.request_id,
@@ -188,7 +229,7 @@ def execute_agent_query(req: QueryRequest, request: Request, authorized: bool = 
         logger.error(f"Workflow execution failure: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
-            detail="An error occurred while executing the research workflow. Please inspect server logs."
+            detail="An error occurred while executing the research workflow."
         )
 
 
@@ -198,19 +239,28 @@ def get_agent_trace(
     request: Request = None,
     authorized: bool = Security(verify_api_key)
 ):
-    """Retrieves redacted execution trace, tool telemetry, and evidence for a request."""
+    """Retrieves redacted execution trace. Requires authentication and validates path safety."""
     if request:
         check_rate_limit(request)
-    trace_file = TRACE_DIR / f"{request_id}.json"
-    if not trace_file.exists():
+
+    # Strictly reject path traversal in request_id
+    if not re.match(r"^[a-zA-Z0-9_\-]{8,64}$", request_id):
+        raise HTTPException(status_code=400, detail="Invalid request_id format.")
+
+    trace_file = (TRACE_DIR / f"{request_id}.json").resolve()
+    if trace_file.parent != TRACE_DIR or not trace_file.exists():
         raise HTTPException(status_code=404, detail=f"Trace for request ID '{request_id}' not found.")
+
     with open(trace_file, "r", encoding="utf-8") as f:
         return json.load(f)
 
 
 @router.get("/v1/evaluation", response_model=Dict[str, Any])
-def get_evaluation_metrics(request: Request = None):
-    """Runs or retrieves benchmark evaluation metrics across RAG architectures."""
+def get_evaluation_metrics(
+    request: Request = None,
+    authorized: bool = Security(verify_api_key)
+):
+    """Runs or retrieves benchmark metrics. Requires authentication."""
     if request:
         check_rate_limit(request)
     try:

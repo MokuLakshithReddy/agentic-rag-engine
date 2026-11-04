@@ -31,3 +31,27 @@ def test_credential_redaction():
     assert "[REDACTED_GITHUB_PAT]" in redacted
     assert "[REDACTED_OPENAI_KEY]" in redacted
 
+
+def test_polarity_contradiction_detection():
+    from src.verification.verifier import AnswerVerifier
+    from src.state.state import AgentState, EvidenceChunk, ResponseStatus
+
+    verifier = AnswerVerifier()
+    chunk = EvidenceChunk(
+        chunk_id="raft#c1",
+        doc_id="raft",
+        content="In distributed consensus, the Raft protocol achieves consensus through leader election and log replication."
+    )
+    # Contradictory claim asserting Raft does not use leader election
+    contradictory_draft = "The Raft protocol does not use leader election for consensus. [raft#c1]"
+    state = AgentState(
+        original_query="Does Raft use leader election?",
+        retrieved_evidence=[chunk],
+        evidence_ids=["raft#c1"],
+        synthesis_draft=contradictory_draft
+    )
+    verified_answer, conf, status = verifier.verify(state)
+    # Must reject the contradiction and abstain
+    assert status == ResponseStatus.ABSTAINED_INSUFFICIENT_EVIDENCE
+    assert any("contradiction" in u.lower() for u in state.unsupported_claims)
+

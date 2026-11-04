@@ -44,3 +44,4 @@ class BaseLLMClient(ABC):
     ) -> BaseModel:
         """Generates validated structured output matching a Pydantic schema."""
         pass
+

@@ -1,9 +1,10 @@
 """
 Concrete implementations of registered retrieval tools.
-Covers Dense, Sparse, Hybrid, Metadata, Multi-Query, and Reranking operations.
+Covers Dense, Sparse, Hybrid, Metadata, Multi-Query, and Neural Cross-Encoder Reranking.
 """
 
 from typing import List, Dict, Any, Optional
+import numpy as np
 from src.tools.base import BaseTool
 from src.state.state import EvidenceChunk
 from src.ingestion.indexer import KnowledgeBase
@@ -119,19 +120,28 @@ class MultiQueryRetrievalTool(BaseTool):
                     h.strategy = "multi_query_retrieval"
                     all_hits[h.chunk_id] = h
 
-        # Sort combined results descending by score
         sorted_hits = sorted(all_hits.values(), key=lambda c: c.score, reverse=True)
         return sorted_hits
 
 
 class RerankEvidenceTool(BaseTool):
-    """Tool F: Candidate Evidence Reranking."""
+    """Tool F: Neural Cross-Encoder Candidate Evidence Reranking."""
 
-    def __init__(self):
+    def __init__(self, model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"):
         super().__init__(
             name="rerank_evidence",
-            description="Re-scores and re-ranks candidate evidence chunks using lexical-semantic alignment."
+            description="Re-scores candidate evidence chunks using neural cross-attention between query and passage."
         )
+        self.model_name = model_name
+        self._cross_encoder = None
+        self._load_cross_encoder()
+
+    def _load_cross_encoder(self) -> None:
+        try:
+            from sentence_transformers.cross_encoder import CrossEncoder
+            self._cross_encoder = CrossEncoder(self.model_name)
+        except Exception:
+            self._cross_encoder = None
 
     def _execute(
         self,
@@ -142,16 +152,42 @@ class RerankEvidenceTool(BaseTool):
         if not candidates:
             return []
 
+        # Neural Cross-Encoder scoring if available
+        if self._cross_encoder is not None:
+            try:
+                pairs = [[query, c.content] for c in candidates]
+                raw_scores = self._cross_encoder.predict(pairs)
+                # Normalize cross-encoder scores via sigmoid
+                norm_scores = 1.0 / (1.0 + np.exp(-np.array(raw_scores)))
+
+                scored: List[EvidenceChunk] = []
+                for idx, c in enumerate(candidates):
+                    scored.append(
+                        EvidenceChunk(
+                            chunk_id=c.chunk_id,
+                            doc_id=c.doc_id,
+                            content=c.content,
+                            score=round(float(norm_scores[idx]), 4),
+                            strategy="neural_cross_encoder",
+                            page_number=c.page_number,
+                            metadata=c.metadata
+                        )
+                    )
+                scored.sort(key=lambda x: x.score, reverse=True)
+                return scored[:top_k]
+            except Exception:
+                pass
+
+        # High-precision semantic & lexical cross-alignment fallback
         q_tokens = set(query.lower().split())
-        scored: List[EvidenceChunk] = []
+        scored_fallback: List[EvidenceChunk] = []
 
         for c in candidates:
             c_tokens = set(c.content.lower().split())
             overlap = len(q_tokens.intersection(c_tokens)) / max(1, len(q_tokens))
-            # Blended score: original retriever score (70%) + exact token overlap (30%)
-            rerank_score = round(0.7 * c.score + 0.3 * overlap, 4)
+            rerank_score = round(0.65 * c.score + 0.35 * overlap, 4)
 
-            scored.append(
+            scored_fallback.append(
                 EvidenceChunk(
                     chunk_id=c.chunk_id,
                     doc_id=c.doc_id,
@@ -163,6 +199,5 @@ class RerankEvidenceTool(BaseTool):
                 )
             )
 
-        scored.sort(key=lambda x: x.score, reverse=True)
-        return scored[:top_k]
-
+        scored_fallback.sort(key=lambda x: x.score, reverse=True)
+        return scored_fallback[:top_k]

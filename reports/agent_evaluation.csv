@@ -1,6 +1,6 @@
 query_id,query,status,confidence,citations_count,tool_calls,latency_ms
-q1_simple_raft,How does Raft break consensus into subproblems?,SUCCESS,0.9453,3,1,15.37
-q2_comparative_eth_sol,Compare Ethereum and Solana consensus mechanisms regarding finality and validator architecture.,SUCCESS,0.9343,3,2,66.64
-q3_multi_doc_pbft_raft,What is the fault tolerance threshold difference between Raft and PBFT?,SUCCESS,0.9334,3,2,35.28
-q4_simple_indexing,Why do LSM trees perform better than B-Trees on write-heavy workloads?,SUCCESS,0.8976,3,1,14.59
-q5_unanswerable_quantum,What quantum error correction code is used in the Falcon processor?,ABSTAINED_OUT_OF_SCOPE,0.0,0,0,0.09
+q1_simple_raft,How does Raft break consensus into subproblems?,SUCCESS,0.9453,3,1,34.15
+q2_comparative_eth_sol,Compare Ethereum and Solana consensus mechanisms regarding finality and validator architecture.,SUCCESS,0.8736,3,2,137.27
+q3_multi_doc_pbft_raft,What is the fault tolerance threshold difference between Raft and PBFT?,SUCCESS,0.7922,3,4,206.59
+q4_simple_indexing,Why do LSM trees perform better than B-Trees on write-heavy workloads?,SUCCESS,0.8976,3,1,26.17
+q5_unanswerable_quantum,What quantum error correction code is used in the Falcon processor?,ABSTAINED_OUT_OF_SCOPE,0.0,0,0,0.15

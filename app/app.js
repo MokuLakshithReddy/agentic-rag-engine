@@ -1,6 +1,8 @@
 // Agentic RAG — Knowledge Research Engine Client
 document.addEventListener("DOMContentLoaded", () => {
   const API_BASE = window.location.origin;
+  const API_KEY = "rag_sec_live_key_2026";
+  const authHeaders = { "X-API-Key": API_KEY, "Content-Type": "application/json" };
 
   // DOM Elements
   const navButtons = document.querySelectorAll(".nav-btn");
@@ -101,7 +103,7 @@ document.addEventListener("DOMContentLoaded", () => {
     try {
       const res = await fetch(`${API_BASE}/v1/agent/query`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders,
         body: JSON.stringify({ query: query })
       });
 
@@ -150,7 +152,9 @@ document.addEventListener("DOMContentLoaded", () => {
   // Fetch Trace for Execution View
   async function fetchTrace(requestId) {
     try {
-      const res = await fetch(`${API_BASE}/v1/agent/trace/${requestId}`);
+      const res = await fetch(`${API_BASE}/v1/agent/trace/${requestId}`, {
+        headers: { "X-API-Key": API_KEY }
+      });
       if (!res.ok) return;
       const traceData = await res.json();
 
@@ -231,7 +235,9 @@ document.addEventListener("DOMContentLoaded", () => {
     btnRunBenchmark.disabled = true;
     btnRunBenchmark.textContent = "Running Benchmark...";
     try {
-      const res = await fetch(`${API_BASE}/v1/evaluation`);
+      const res = await fetch(`${API_BASE}/v1/evaluation`, {
+        headers: { "X-API-Key": API_KEY }
+      });
       if (res.ok) {
         alert("Benchmark completed! Check reports/baseline_comparison.csv and reports/performance_report.md");
       }

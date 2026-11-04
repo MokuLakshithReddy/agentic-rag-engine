@@ -241,3 +241,4 @@ def get_llm_client(force_offline: bool = False) -> BaseLLMClient:
 
     # In local/offline or unconfigured environments, use deterministic reasoning client
     return DeterministicReasoningLLMClient()
+
