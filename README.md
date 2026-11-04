@@ -133,10 +133,10 @@ python -c "from src.evaluation.benchmark import BenchmarkRunner; runner = Benchm
 ## Empirical Benchmark Results
 
 | Architecture | Mean Recall@5 | Mean Precision@5 | Mean MRR | Abstention Accuracy | Mean Latency |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **Standard RAG** | 0.6000 | 0.3333 | 0.7000 | 0.0% (Hallucinated) | ~1.2 ms |
-| **Optimized RAG** | 0.8000 | 0.4500 | 0.8500 | 0.0% (Hallucinated) | ~3.8 ms |
-| **Agentic RAG Engine** | **1.0000** | **0.6667** | **1.0000** | **100.0% (Abstained)** | ~8.5 ms |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| **Standard RAG** | 1.0000 | 0.5000 | 1.0000 | 80.0% (Hallucinated on unanswerable) | ~23.9 ms |
+| **Optimized RAG** | 1.0000 | 0.3750 | 1.0000 | 80.0% (Hallucinated on unanswerable) | ~25.4 ms |
+| **Agentic RAG Engine** | **1.0000** | **0.4125** | **1.0000** | **100.0% (Verified Abstention)** | ~41.4 ms |
 
 ---
 

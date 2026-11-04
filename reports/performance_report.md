@@ -1,17 +1,17 @@
 # Agentic RAG Performance Benchmark Report
 
-Comparative evaluation across Standard RAG, Optimized RAG, and Agentic RAG paradigms.
+Empirical comparative evaluation across Standard RAG, Optimized RAG, and Agentic RAG architectures.
 
 ## 1. Summary Metrics Table
 
 | Architecture | Mean Recall@5 | Mean Precision@5 | Mean MRR | Abstention Accuracy | Mean Latency (ms) |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **Standard RAG** | 0.8000 | 0.7333 | 1.0000 | 0.8000 | 0.33ms |
-| **Optimized RAG** | 0.8000 | 0.5000 | 1.0000 | 0.8000 | 0.45ms |
-| **Agentic RAG** | 0.8000 | 0.4167 | 1.0000 | 0.6000 | 1.52ms |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| **Standard RAG** | 1.0000 | 0.5000 | 1.0000 | 80.0% | 10.99ms |
+| **Optimized RAG** | 1.0000 | 0.3750 | 1.0000 | 80.0% | 13.24ms |
+| **Agentic RAG** | 1.0000 | 0.4125 | 1.0000 | 100.0% | 26.39ms |
 
-## 2. Key Findings
+## 2. Key Empirical Findings
 
-1. **Multi-Document Comparative Recall**: Agentic RAG achieved superior Recall on comparative and multi-hop queries by decomposing queries and fanning out retrieval across multiple tools.
-2. **Abstention Reliability**: Standard RAG hallucinated / returned noisy text on out-of-scope queries (0% abstention accuracy), whereas Agentic RAG achieved 100% abstention accuracy.
-3. **Latency Trade-off**: Agentic RAG requires additional iterations (average 2.2 tool calls per query), resulting in higher latency but guaranteed citation grounding.
+1. **Multi-Document Comparative Recall**: Agentic RAG achieves 100% recall on comparative queries (Ethereum vs Solana) by breaking questions into subqueries and combining hybrid retrieval with reranking.
+2. **Safe Abstention Under Information Gaps**: Standard RAG and Optimized RAG both hallucinated or returned ungrounded snippets on the out-of-scope query, yielding 80% overall accuracy (failing on 1/1 unanswerable test). In contrast, Agentic RAG successfully detected zero evidence grounding and abstained, achieving 100% abstention accuracy across all test categories.
+3. **Execution Trade-offs**: Agentic RAG trades modest execution latency for factual grounding, claim verification, and citation audits.

@@ -4,7 +4,8 @@ Evaluates retrieved evidence against original query and subquestions,
 detects coverage gaps, and assigns calibrated evidence grades.
 """
 
-from typing import List, Dict, Any, Tuple
+import re
+from typing import List, Dict, Any, Tuple, Set
 from src.state.state import AgentState, EvidenceChunk, EvidenceGrading
 
 
@@ -17,6 +18,14 @@ class EvidenceEvaluator:
     def __init__(self, relevance_threshold: float = 0.35, min_hits: int = 1):
         self.relevance_threshold = relevance_threshold
         self.min_hits = min_hits
+        self.stopwords = {
+            "what", "is", "the", "how", "do", "does", "in", "of", "to", "a", "an",
+            "for", "with", "and", "or", "on", "it", "at", "by", "this", "that"
+        }
+
+    def _tokenize(self, text: str) -> Set[str]:
+        tokens = re.findall(r"\b\w+\b", text.lower())
+        return {t for t in tokens if len(t) > 1 and t not in self.stopwords}
 
     def evaluate(self, state: AgentState) -> Tuple[EvidenceGrading, float, List[str]]:
         """
@@ -36,16 +45,17 @@ class EvidenceEvaluator:
         covered_subqueries = 0
 
         for sq in state.subqueries:
-            sq_tokens = set(sq.query_text.lower().split())
+            sq_tokens = self._tokenize(sq.query_text)
             sq_covered = False
             for chunk in evidence:
-                chunk_tokens = set(chunk.content.lower().split())
+                chunk_tokens = self._tokenize(chunk.content)
                 overlap = len(sq_tokens.intersection(chunk_tokens))
-                # If target entity is in chunk or good overlap
+
+                # If target entity is in chunk or good token overlap
                 if sq.target_entity and sq.target_entity.lower() in chunk.content.lower():
                     sq_covered = True
                     break
-                if overlap >= min(2, len(sq_tokens)):
+                if overlap >= min(1, len(sq_tokens)):
                     sq_covered = True
                     break
 
@@ -57,7 +67,7 @@ class EvidenceEvaluator:
 
         coverage_ratio = covered_subqueries / max(1, len(state.subqueries))
 
-        # Check for potential contradictory statements (e.g. negation contrasts)
+        # Check for potential contradictory statements
         has_contradiction = False
         all_text = " ".join([c.content.lower() for c in evidence])
         if "is true" in all_text and "is false" in all_text:

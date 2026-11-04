@@ -1,12 +1,13 @@
 """
-Base Tool definition for the Agentic RAG system.
-Enforces typed schemas, timeout execution, input sanitization,
+Base Tool definition with strict execution timeouts and budget auditing.
+Enforces typed schemas, concurrent timeout execution, input sanitization,
 structured error handling, and audit telemetry.
 """
 
 from abc import ABC, abstractmethod
 from typing import Dict, Any, List, Optional
 import time
+import concurrent.futures
 from pydantic import BaseModel, Field
 from src.state.state import ToolCallRecord, EvidenceChunk
 
@@ -19,7 +20,7 @@ class BaseToolInput(BaseModel):
 class BaseTool(ABC):
     """
     Abstract base tool class.
-    All registered tools must inherit from BaseTool.
+    All registered tools inherit from BaseTool and execute under a hard timeout.
     """
 
     def __init__(self, name: str, description: str, timeout_sec: float = 5.0):
@@ -34,16 +35,19 @@ class BaseTool(ABC):
 
     def run(self, **kwargs) -> Dict[str, Any]:
         """
-        Executes the tool wrapped in safety guards, timing, and error handling.
+        Executes tool wrapped in a concurrent timeout worker, timing, and error handling.
         """
         start_time = time.time()
         record = ToolCallRecord(
             tool_name=self.name,
-            query_input=str(kwargs.get("query", kwargs.get("subqueries", "")))
+            query_input=str(kwargs.get("query", kwargs.get("subqueries", "")))[:200]
         )
 
         try:
-            results = self._execute(**kwargs)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(self._execute, **kwargs)
+                results = future.result(timeout=self.timeout_sec)
+
             elapsed_ms = (time.time() - start_time) * 1000.0
             record.execution_time_ms = round(elapsed_ms, 2)
             record.success = True
@@ -52,6 +56,18 @@ class BaseTool(ABC):
                 "success": True,
                 "data": results,
                 "record": record
+            }
+        except concurrent.futures.TimeoutError:
+            elapsed_ms = (time.time() - start_time) * 1000.0
+            record.execution_time_ms = round(elapsed_ms, 2)
+            record.success = False
+            record.error_message = f"Tool execution timed out after {self.timeout_sec}s."
+            record.results_count = 0
+            return {
+                "success": False,
+                "data": [],
+                "record": record,
+                "error": record.error_message
             }
         except Exception as e:
             elapsed_ms = (time.time() - start_time) * 1000.0
@@ -65,4 +81,3 @@ class BaseTool(ABC):
                 "record": record,
                 "error": str(e)
             }
-

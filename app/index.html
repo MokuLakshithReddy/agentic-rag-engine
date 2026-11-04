@@ -243,27 +243,27 @@
                 <tbody id="benchmark-tbody">
                   <tr>
                     <td><strong>Standard RAG</strong> (Dense Only)</td>
-                    <td>0.6000</td>
-                    <td>0.3333</td>
-                    <td>0.7000</td>
-                    <td><span class="badge badge-red">0.0% (Hallucinated)</span></td>
-                    <td>~1.2 ms</td>
+                    <td>1.0000</td>
+                    <td>0.5000</td>
+                    <td>1.0000</td>
+                    <td><span class="badge badge-yellow">80.0% (Hallucinated on unanswerable)</span></td>
+                    <td>~23.9 ms</td>
                   </tr>
                   <tr>
                     <td><strong>Optimized RAG</strong> (Hybrid+Rerank)</td>
-                    <td>0.8000</td>
-                    <td>0.4500</td>
-                    <td>0.8500</td>
-                    <td><span class="badge badge-red">0.0% (Hallucinated)</span></td>
-                    <td>~3.8 ms</td>
+                    <td>1.0000</td>
+                    <td>0.3750</td>
+                    <td>1.0000</td>
+                    <td><span class="badge badge-yellow">80.0% (Hallucinated on unanswerable)</span></td>
+                    <td>~25.4 ms</td>
                   </tr>
                   <tr class="highlight-row">
                     <td><strong>Agentic RAG Engine</strong> (Full Loop)</td>
                     <td><strong>1.0000</strong></td>
-                    <td><strong>0.6667</strong></td>
+                    <td><strong>0.4125</strong></td>
                     <td><strong>1.0000</strong></td>
-                    <td><span class="badge badge-green">100.0% (Abstained)</span></td>
-                    <td>~8.5 ms</td>
+                    <td><span class="badge badge-green">100.0% (Verified Abstention)</span></td>
+                    <td>~41.4 ms</td>
                   </tr>
                 </tbody>
               </table>

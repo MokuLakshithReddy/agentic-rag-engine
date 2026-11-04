@@ -121,7 +121,7 @@ class AgentState(BaseModel):
         )
         self.trace.append(step)
 
-    def record_tool_call(self, record: ToolCallRecord) -> None:
+    def record_tool_call(self, record: ToolCallRecord, cost: int = 1) -> None:
         self.tool_call_history.append(record)
-        self.tool_budget_remaining = max(0, self.tool_budget_remaining - 1)
+        self.tool_budget_remaining = max(0, self.tool_budget_remaining - cost)
 

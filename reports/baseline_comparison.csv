@@ -2,5 +2,5 @@ query_id,category,std_recall,opt_recall,agt_recall,std_mrr,opt_mrr,agt_mrr,std_a
 q1_simple_raft,simple_factual,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0
 q2_comparative_eth_sol,comparative,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0
 q3_multi_doc_pbft_raft,multi_document,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0
-q4_simple_indexing,simple_factual,1.0,1.0,1.0,1.0,1.0,1.0,1.0,0.0
-q5_unanswerable_quantum,out_of_scope,0.0,0.0,0.0,1.0,1.0,1.0,0.0,0.0
+q4_simple_indexing,simple_factual,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0
+q5_unanswerable_quantum,out_of_scope,N/A,N/A,N/A,N/A,N/A,N/A,0.0,1.0

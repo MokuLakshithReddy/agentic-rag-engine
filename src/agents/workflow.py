@@ -100,11 +100,12 @@ class AgenticRAGWorkflow:
             if "multi_query_retrieval" in state.selected_tools and len(state.subqueries) > 1:
                 sq_texts = [sq.query_text for sq in state.subqueries]
                 res = self.tool_registry.execute_tool("multi_query_retrieval", subqueries=sq_texts, top_k_per_query=3)
-                if res.get("success") and res.get("record"):
-                    state.record_tool_call(res["record"])
+                if res.get("record"):
+                    # Multi-query executes N underlying subquery searches -> deduct N calls from budget
+                    state.record_tool_call(res["record"], cost=len(sq_texts))
+                if res.get("success"):
                     for chunk in res.get("data", []):
                         if chunk.chunk_id not in seen_ids:
-                            # Run security check on evidence content
                             if not self.guardrails.inspect_evidence_chunk(chunk.content):
                                 seen_ids.add(chunk.chunk_id)
                                 retrieved_pool.append(chunk)
@@ -115,8 +116,9 @@ class AgenticRAGWorkflow:
                     if state.tool_budget_remaining <= 0:
                         break
                     res = self.tool_registry.execute_tool(primary_tool, query=sq.query_text, top_k=4)
-                    if res.get("success") and res.get("record"):
-                        state.record_tool_call(res["record"])
+                    if res.get("record"):
+                        state.record_tool_call(res["record"], cost=1)
+                    if res.get("success"):
                         for chunk in res.get("data", []):
                             if chunk.chunk_id not in seen_ids:
                                 if not self.guardrails.inspect_evidence_chunk(chunk.content):
@@ -128,8 +130,9 @@ class AgenticRAGWorkflow:
                 res_rerank = self.tool_registry.execute_tool(
                     "rerank_evidence", query=state.normalized_query, candidates=retrieved_pool, top_k=6
                 )
-                if res_rerank.get("success") and res_rerank.get("record"):
-                    state.record_tool_call(res_rerank["record"])
+                if res_rerank.get("record"):
+                    state.record_tool_call(res_rerank["record"], cost=1)
+                if res_rerank.get("success"):
                     retrieved_pool = res_rerank.get("data", retrieved_pool)
 
             state.retrieved_evidence = retrieved_pool
