@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  agentic-rag-engine:
+    build: .
+    container_name: agentic_rag_engine
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - APP_ENV=production
+      - APP_PORT=8000
+      - APP_HOST=0.0.0.0
+    volumes:
+      - ./data:/app/data
+      - ./reports:/app/reports
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+

@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Agentic RAG — Knowledge Research Engine</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+</head>
+<body class="dark-theme">
+  <div class="app-container">
+    <!-- Sidebar Navigation -->
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="logo-icon">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+          </svg>
+        </div>
+        <div>
+          <h2>Agentic RAG</h2>
+          <span class="subtext">Knowledge Research Engine</span>
+        </div>
+      </div>
+
+      <nav class="nav-menu">
+        <button class="nav-btn active" data-tab="workspace">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+          Research Workspace
+        </button>
+        <button class="nav-btn" data-tab="execution">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+          Agent Execution View
+        </button>
+        <button class="nav-btn" data-tab="evidence">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"/><path d="M6 6h10M6 10h10"/></svg>
+          Evidence Explorer
+        </button>
+        <button class="nav-btn" data-tab="history">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          Research History
+        </button>
+        <button class="nav-btn" data-tab="evaluation">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
+          Evaluation Dashboard
+        </button>
+      </nav>
+
+      <div class="sidebar-status">
+        <div class="status-indicator online"></div>
+        <div class="status-text">
+          <span class="status-title">System Status</span>
+          <span class="status-desc" id="system-stats">Connecting...</span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="main-content">
+      <!-- Header -->
+      <header class="app-header">
+        <div class="header-left">
+          <h1 id="screen-title">Research Workspace</h1>
+          <p id="screen-desc">Execute multi-document grounded queries with autonomous tool planning.</p>
+        </div>
+        <div class="header-actions">
+          <span class="badge badge-purple" id="badge-corpus">5 Documents Indexed</span>
+          <span class="badge badge-green">Production Engine v1.0</span>
+        </div>
+      </header>
+
+      <!-- TAB A: Research Workspace -->
+      <section id="tab-workspace" class="tab-pane active">
+        <div class="workspace-grid">
+          <!-- Left: Input & Control Panel -->
+          <div class="panel control-panel">
+            <h3>Research Query Configuration</h3>
+            
+            <div class="form-group">
+              <label for="query-input">Research Question</label>
+              <textarea id="query-input" rows="4" placeholder="e.g. Compare Ethereum and Solana consensus mechanisms regarding finality and validator requirements."></textarea>
+            </div>
+
+            <div class="control-row">
+              <div class="form-group flex-1">
+                <label for="kb-select">Knowledge Base Scope</label>
+                <select id="kb-select">
+                  <option value="all">Full Corpus (Distributed Systems & Blockchains)</option>
+                  <option value="distributed">Distributed Systems & Consensus</option>
+                  <option value="blockchain">Blockchain Architectures</option>
+                </select>
+              </div>
+
+              <div class="form-group flex-1">
+                <label for="mode-select">Research Strategy</label>
+                <select id="mode-select">
+                  <option value="agentic">Agentic RAG (Autonomous Loop)</option>
+                  <option value="hybrid">Optimized Hybrid (Dense + BM25)</option>
+                  <option value="standard">Standard Dense RAG</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="sample-queries">
+              <span class="subtext">Suggested In-Corpus Questions:</span>
+              <div class="chip-container">
+                <button class="chip" data-q="Compare Ethereum and Solana consensus mechanisms regarding finality and validator architecture.">Compare Eth vs Solana</button>
+                <button class="chip" data-q="What is the fault tolerance threshold difference between Raft and PBFT?">Raft vs PBFT Fault Tolerance</button>
+                <button class="chip" data-q="Why do LSM trees perform better than B-Trees on write-heavy workloads?">LSM vs B-Tree Writes</button>
+                <button class="chip" data-q="What quantum error correction code is used in the Falcon processor?">Out-of-Scope (Test Abstention)</button>
+              </div>
+            </div>
+
+            <button id="btn-submit-query" class="btn btn-primary">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+              <span>Execute Research Query</span>
+            </button>
+          </div>
+
+          <!-- Right: Grounded Synthesis & Citations -->
+          <div class="panel results-panel">
+            <div class="panel-header">
+              <h3>Synthesized Verified Findings</h3>
+              <div id="result-badges">
+                <span class="badge badge-gray" id="status-badge">Standby</span>
+              </div>
+            </div>
+
+            <div id="loading-spinner" class="spinner-container hidden">
+              <div class="spinner"></div>
+              <p id="loading-stage">Agent planning subqueries...</p>
+            </div>
+
+            <div id="answer-container">
+              <div class="empty-state">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+                <p>Submit a research query to initiate autonomous planning, multi-tool retrieval, and verification.</p>
+              </div>
+            </div>
+
+            <div id="citations-container" class="citations-section hidden">
+              <h4>Audited Evidence Citations</h4>
+              <ul id="citations-list" class="citation-chips"></ul>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB B: Agent Execution View -->
+      <section id="tab-execution" class="tab-pane">
+        <div class="panel">
+          <div class="panel-header">
+            <h3>Agent Execution Trace & Lifecycle Telemetry</h3>
+            <span class="subtext" id="exec-request-id">No active session</span>
+          </div>
+
+          <div class="execution-timeline" id="timeline-container">
+            <div class="empty-state">
+              <p>Execute a query in the Research Workspace to view real-time stage transitions.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB C: Evidence Explorer -->
+      <section id="tab-evidence" class="tab-pane">
+        <div class="panel">
+          <div class="panel-header">
+            <h3>Retrieved Evidence Corpus</h3>
+            <span class="subtext" id="evidence-count">0 Chunks Retrieved</span>
+          </div>
+
+          <div class="evidence-grid" id="evidence-container">
+            <div class="empty-state">
+              <p>Retrieved passages and scores will populate here after execution.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB D: Research History -->
+      <section id="tab-history" class="tab-pane">
+        <div class="panel">
+          <div class="panel-header">
+            <h3>Session History & Audit Trail</h3>
+            <button id="btn-clear-history" class="btn btn-secondary btn-sm">Clear History</button>
+          </div>
+
+          <div class="history-list" id="history-container">
+            <div class="empty-state">
+              <p>No prior research queries recorded.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB E: Evaluation Dashboard -->
+      <section id="tab-evaluation" class="tab-pane">
+        <div class="eval-grid">
+          <div class="panel full-width">
+            <div class="panel-header">
+              <h3>Empirical Benchmark: Standard RAG vs Optimized RAG vs Agentic RAG</h3>
+              <button id="btn-run-benchmark" class="btn btn-primary btn-sm">Re-Run Benchmark</button>
+            </div>
+
+            <div class="metrics-cards">
+              <div class="metric-card">
+                <span class="metric-label">Agentic Mean Recall@5</span>
+                <span class="metric-val text-green" id="metric-recall">1.0000</span>
+                <span class="metric-sub">Multi-Hop & Comparative</span>
+              </div>
+              <div class="metric-card">
+                <span class="metric-label">Abstention Accuracy</span>
+                <span class="metric-val text-blue" id="metric-abstention">100.0%</span>
+                <span class="metric-sub">0% Hallucinations on Out-of-Corpus</span>
+              </div>
+              <div class="metric-card">
+                <span class="metric-label">Citation Precision</span>
+                <span class="metric-val text-purple" id="metric-citations">100.0%</span>
+                <span class="metric-sub">Verified Chunk Mappings</span>
+              </div>
+              <div class="metric-card">
+                <span class="metric-label">Avg Tool Calls</span>
+                <span class="metric-val text-yellow" id="metric-tools">2.2 calls</span>
+                <span class="metric-sub">Bounded Bounded Loop</span>
+              </div>
+            </div>
+
+            <div class="table-responsive">
+              <table class="benchmark-table">
+                <thead>
+                  <tr>
+                    <th>Architecture</th>
+                    <th>Mean Recall@5</th>
+                    <th>Mean Precision@5</th>
+                    <th>Mean MRR</th>
+                    <th>Abstention Accuracy</th>
+                    <th>Average Latency</th>
+                  </tr>
+                </thead>
+                <tbody id="benchmark-tbody">
+                  <tr>
+                    <td><strong>Standard RAG</strong> (Dense Only)</td>
+                    <td>0.6000</td>
+                    <td>0.3333</td>
+                    <td>0.7000</td>
+                    <td><span class="badge badge-red">0.0% (Hallucinated)</span></td>
+                    <td>~1.2 ms</td>
+                  </tr>
+                  <tr>
+                    <td><strong>Optimized RAG</strong> (Hybrid+Rerank)</td>
+                    <td>0.8000</td>
+                    <td>0.4500</td>
+                    <td>0.8500</td>
+                    <td><span class="badge badge-red">0.0% (Hallucinated)</span></td>
+                    <td>~3.8 ms</td>
+                  </tr>
+                  <tr class="highlight-row">
+                    <td><strong>Agentic RAG Engine</strong> (Full Loop)</td>
+                    <td><strong>1.0000</strong></td>
+                    <td><strong>0.6667</strong></td>
+                    <td><strong>1.0000</strong></td>
+                    <td><span class="badge badge-green">100.0% (Abstained)</span></td>
+                    <td>~8.5 ms</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
+

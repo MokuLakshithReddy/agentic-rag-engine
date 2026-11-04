@@ -1,0 +1,30 @@
+# Agentic RAG Engine System Configuration
+
+system:
+  environment: "development"
+  debug: false
+  request_timeout_sec: 30.0
+  max_tool_executions_per_request: 6
+  max_planning_revisions: 2
+  max_subqueries_per_request: 4
+
+retrieval:
+  default_top_k: 5
+  chunk_size: 400
+  chunk_overlap: 80
+  rrf_k: 60
+  dense_weight: 0.5
+  sparse_weight: 0.5
+  similarity_threshold: 0.25
+
+evaluation:
+  abstention_threshold: 0.35
+  verification_threshold: 0.70
+  max_context_chars: 12000
+
+security:
+  enable_sanitizer: true
+  max_upload_size_mb: 25
+  allowed_extensions: [".txt", ".md", ".json", ".pdf"]
+  redact_logs: true
+
