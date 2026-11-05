@@ -27,15 +27,21 @@ class MetadataRetriever:
         source_file: Optional[str] = None,
         custom_filters: Optional[Dict[str, Any]] = None,
         query: Optional[str] = None,
-        top_k: Optional[int] = None
+        top_k: Optional[int] = None,
+        cancel_token: Optional[Any] = None
     ) -> List[EvidenceChunk]:
         """
-        Filters chunks matching provided metadata criteria.
+        Filters chunks matching provided metadata criteria with cancellation check.
         """
+        if cancel_token and getattr(cancel_token, "is_set", lambda: False)():
+            return []
+
         k = top_k or self.top_k
         results: List[EvidenceChunk] = []
 
         for chunk in self.chunks:
+            if cancel_token and getattr(cancel_token, "is_set", lambda: False)():
+                break
             if doc_id and chunk.doc_id.lower() != doc_id.lower():
                 continue
             if category and chunk.metadata.get("category", "").lower() != category.lower():

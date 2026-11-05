@@ -53,6 +53,17 @@ class KnowledgeBase:
         if self.persist_file:
             self._load_from_disk()
 
+    def __getstate__(self) -> Dict[str, Any]:
+        """Custom serialization omitting threading locks for multiprocessing pickling."""
+        state = self.__dict__.copy()
+        state["_lock"] = None
+        return state
+
+    def __setstate__(self, state: Dict[str, Any]) -> None:
+        """Custom deserialization recreating re-entrant thread lock."""
+        self.__dict__.update(state)
+        self._lock = threading.RLock()
+
     def _persist_to_disk(self) -> None:
         """Writes current raw documents to JSONL persistence file if enabled."""
         if not self.persist_file:

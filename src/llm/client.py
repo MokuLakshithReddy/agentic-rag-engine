@@ -254,6 +254,20 @@ class DeterministicReasoningLLMClient(BaseLLMClient):
             premise = premise_match.group(1).strip() if premise_match else ""
             claim = claim_match.group(1).strip() if claim_match else last_msg
 
+            # Use local neural DeBERTa-v3 CrossEncoder for true model-based NLI
+            try:
+                from src.verification.neural_nli import NeuralNLIClassifier
+                nli_clf = NeuralNLIClassifier.get_instance()
+                nli_res = nli_clf.classify(premise=premise, hypothesis=claim)
+                return response_model.model_validate({
+                    "is_entailed": nli_res["is_entailed"],
+                    "contradiction": nli_res["contradiction"],
+                    "confidence": nli_res["confidence"],
+                    "rationale": f"Neural NLI DeBERTa-v3 inference: {nli_res['label']} ({nli_res['confidence']:.2f})"
+                })
+            except Exception:
+                pass
+
             claim_lower = claim.lower()
             premise_lower = premise.lower()
 

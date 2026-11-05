@@ -27,7 +27,12 @@ class DenseRetrievalTool(BaseTool):
         filter_metadata: Optional[Dict[str, Any]] = None,
         **kwargs
     ) -> List[EvidenceChunk]:
-        return self.kb.dense.search(query=query, top_k=top_k, filter_metadata=filter_metadata)
+        return self.kb.dense.search(
+            query=query,
+            top_k=top_k,
+            filter_metadata=filter_metadata,
+            cancel_token=kwargs.get("cancel_token")
+        )
 
 
 class SparseRetrievalTool(BaseTool):
@@ -47,7 +52,12 @@ class SparseRetrievalTool(BaseTool):
         filter_metadata: Optional[Dict[str, Any]] = None,
         **kwargs
     ) -> List[EvidenceChunk]:
-        return self.kb.sparse.search(query=query, top_k=top_k, filter_metadata=filter_metadata)
+        return self.kb.sparse.search(
+            query=query,
+            top_k=top_k,
+            filter_metadata=filter_metadata,
+            cancel_token=kwargs.get("cancel_token")
+        )
 
 
 class HybridRetrievalTool(BaseTool):
@@ -67,7 +77,12 @@ class HybridRetrievalTool(BaseTool):
         filter_metadata: Optional[Dict[str, Any]] = None,
         **kwargs
     ) -> List[EvidenceChunk]:
-        return self.kb.hybrid.search(query=query, top_k=top_k, filter_metadata=filter_metadata)
+        return self.kb.hybrid.search(
+            query=query,
+            top_k=top_k,
+            filter_metadata=filter_metadata,
+            cancel_token=kwargs.get("cancel_token")
+        )
 
 
 class MetadataSearchTool(BaseTool):
@@ -96,7 +111,8 @@ class MetadataSearchTool(BaseTool):
             source_file=source_file,
             custom_filters=custom_filters,
             query=query,
-            top_k=top_k
+            top_k=top_k,
+            cancel_token=kwargs.get("cancel_token")
         )
 
 

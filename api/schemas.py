@@ -44,3 +44,23 @@ class HealthResponse(BaseModel):
     total_chunks: int
     version: str
 
+
+class UserRegisterRequest(BaseModel):
+    username: str = Field(..., min_length=3, max_length=64, description="Unique username")
+    password: str = Field(..., min_length=6, max_length=128, description="User password")
+    tenant_id: Optional[str] = Field(None, description="Optional organization or workspace tenant ID")
+
+
+class UserLoginRequest(BaseModel):
+    username: str = Field(..., description="Registered username")
+    password: str = Field(..., description="User password")
+
+
+class AuthTokenResponse(BaseModel):
+    session_token: str
+    user_id: str
+    tenant_id: str
+    role: str
+    expires_in: int
+
+

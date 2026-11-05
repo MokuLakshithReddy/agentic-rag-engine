@@ -28,8 +28,11 @@ ENV/
 .vscode/
 
 # Data and Indices
-data/indices/*.jsonl
+data/indices/
+data/tenants/
 data/traces/
+data/users.json
+data/*.jsonl
 *.index
 *.sqlite3
 

@@ -6,9 +6,9 @@ Empirical comparative evaluation across Standard RAG, Optimized RAG, and Agentic
 
 | Architecture | Mean Recall@5 | Mean Precision@5 | Mean MRR | Abstention Accuracy | Mean Latency (ms) |
 | :--- | :---: | :---: | :---: | :---: | :---: |
-| **Standard RAG** | 1.0000 | 0.5000 | 1.0000 | 75.0% | 16.93ms |
-| **Optimized RAG** | 1.0000 | 0.3750 | 1.0000 | 91.7% | 83.07ms |
-| **Agentic RAG** | 1.0000 | 0.4268 | 1.0000 | 70.8% | 47.81ms |
+| **Standard RAG** | 1.0000 | 0.5000 | 1.0000 | 75.0% | 12.66ms |
+| **Optimized RAG** | 1.0000 | 0.3750 | 1.0000 | 91.7% | 68.39ms |
+| **Agentic RAG** | 1.0000 | 0.4268 | 1.0000 | 58.3% | 471.52ms |
 
 ## 2. Key Empirical Findings
 

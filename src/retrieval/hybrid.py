@@ -35,16 +35,25 @@ class HybridRetriever:
         self,
         query: str,
         top_k: Optional[int] = None,
-        filter_metadata: Optional[Dict[str, Any]] = None
+        filter_metadata: Optional[Dict[str, Any]] = None,
+        cancel_token: Optional[Any] = None
     ) -> List[EvidenceChunk]:
         """
-        Executes hybrid dense-sparse search and merges rankings via RRF.
+        Executes hybrid dense-sparse search and merges rankings via RRF with cancellation checks.
         """
+        if cancel_token and getattr(cancel_token, "is_set", lambda: False)():
+            return []
+
         k = top_k or self.top_k
         pool_k = k * 3
 
-        dense_hits = self.dense_retriever.search(query, top_k=pool_k, filter_metadata=filter_metadata)
-        sparse_hits = self.sparse_retriever.search(query, top_k=pool_k, filter_metadata=filter_metadata)
+        dense_hits = self.dense_retriever.search(query, top_k=pool_k, filter_metadata=filter_metadata, cancel_token=cancel_token)
+        if cancel_token and getattr(cancel_token, "is_set", lambda: False)():
+            return []
+
+        sparse_hits = self.sparse_retriever.search(query, top_k=pool_k, filter_metadata=filter_metadata, cancel_token=cancel_token)
+        if cancel_token and getattr(cancel_token, "is_set", lambda: False)():
+            return []
 
         rrf_scores: Dict[str, float] = {}
         chunk_map: Dict[str, EvidenceChunk] = {}

@@ -160,7 +160,19 @@ class AnswerVerifier:
         except Exception:
             pass
 
-        # 3. Deterministic lexical fallback if LLM client is unavailable
+        # 3. Local Neural NLI Cross-Encoder Fallback
+        try:
+            from src.verification.neural_nli import NeuralNLIClassifier
+            nli_res = NeuralNLIClassifier.get_instance().classify(chunk_text, claim_clean)
+            if nli_res["contradiction"]:
+                return False, cited_id, 0.0, True
+            if not nli_res["is_entailed"]:
+                return False, cited_id, round(nli_res["confidence"], 3), False
+            return True, cited_id, round(nli_res["confidence"], 3), False
+        except Exception:
+            pass
+
+        # 4. Deterministic lexical fallback if all neural models are unavailable
         stopwords = {
             "the", "a", "an", "is", "are", "was", "were", "and", "or", "to", "in",
             "of", "for", "with", "that", "this", "by", "from", "on", "it", "its"

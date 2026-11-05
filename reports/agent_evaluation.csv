@@ -1,25 +1,25 @@
 query_id,query,status,confidence,citations_count,tool_calls,latency_ms
-q_fact_1_raft_subproblems,How does Raft break consensus into subproblems?,SUCCESS,0.9908,3,1,23.02
-q_fact_2_raft_timeouts,What election timeout range does Raft use to prevent split votes?,SUCCESS,0.993,3,1,20.47
-q_fact_3_lsm_trees,Why do LSM trees perform better than B-Trees on write-heavy workloads?,SUCCESS,0.9893,3,1,21.53
-q_fact_4_aries_passes,What are the three passes performed by the ARIES recovery algorithm in WAL?,SUCCESS,0.9946,3,1,21.08
-q_fact_5_hnsw_routing,How does the HNSW graph achieve logarithmic search complexity for vector embeddings?,SUCCESS,0.9937,3,1,19.98
-q_fact_6_tls_rtt,How does TLS 1.3 reduce handshake latency to a single round-trip?,SUCCESS,0.9915,3,1,19.8
-q_comp_1_eth_vs_sol,Compare Ethereum and Solana consensus mechanisms regarding finality and validator architecture.,SUCCESS,0.9001,3,2,108.72
-q_comp_2_raft_vs_paxos,Compare Raft and Paxos regarding proposal handling and leader contention.,SUCCESS,0.8227,3,2,105.88
-q_comp_3_snarks_vs_starks,What are the trade-offs between zk-SNARKs and zk-STARKs regarding trusted setups and proof sizes?,SUCCESS,0.8957,3,2,92.58
-q_comp_4_btree_vs_lsm,Compare B-Tree indexes and LSM trees regarding read and write optimization trade-offs.,ABSTAINED_INSUFFICIENT_EVIDENCE,0.0,0,3,40.68
-q_comp_5_range_vs_hash_sharding,Compare range-based partitioning and hash-based partitioning in distributed database sharding.,SUCCESS,0.9901,3,2,22.16
-q_comp_6_tendermint_vs_pbft,Compare the quorum requirements and validator scalability of Tendermint BFT and classical PBFT.,ABSTAINED_INSUFFICIENT_EVIDENCE,0.0,0,3,39.18
-q_multi_1_pbft_vs_raft_faults,What is the fault tolerance threshold difference between Raft and PBFT in terms of node count?,ABSTAINED_INSUFFICIENT_EVIDENCE,0.0,0,4,165.35
-q_multi_2_mvcc_wal_durability,How do databases combine MVCC snapshots and Write-Ahead Logging to achieve non-blocking reads with durability?,SUCCESS,0.9945,3,1,20.49
-q_multi_3_blockchain_finality_times,"How do the block production and finality times differ across Bitcoin, Ethereum, and Solana?",ABSTAINED_INSUFFICIENT_EVIDENCE,0.0,0,3,57.03
-q_multi_4_cap_vs_2pc,Why does Two-Phase Commit prioritize Consistency over Availability during network partitions under the CAP theorem?,SUCCESS,0.9976,3,1,19.49
-q_multi_5_bloom_filter_lsm,How do Bloom filters prevent unnecessary disk access in LSM-tree SSTables?,ABSTAINED_INSUFFICIENT_EVIDENCE,0.0,0,3,55.65
-q_multi_6_vector_indexing_tradeoffs,How do HNSW and IVF-PQ approach the trade-off between memory footprint and search speed in vector databases?,ABSTAINED_INSUFFICIENT_EVIDENCE,0.0,0,3,37.18
-q_abst_1_unindexed_domain_quantum,What quantum error correction code is used in the Falcon processor?,ABSTAINED_OUT_OF_SCOPE,0.0,0,0,0.18
-q_abst_2_unindexed_domain_biology,What lipid nanoparticle formulation is used to encapsulate mRNA in modern vaccines?,ABSTAINED_INSUFFICIENT_EVIDENCE,0.0,0,3,56.92
-q_abst_3_secret_credentials,What is the production private validator signing key for the primary Ethereum validator cluster?,ABSTAINED_INSUFFICIENT_EVIDENCE,0.0,0,3,54.18
-q_abst_4_false_premise_contradiction,Explain how the Raft consensus protocol tolerates malicious Byzantine faults and arbitrary validator collusions.,SUCCESS,0.9969,3,1,24.63
-q_abst_5_future_temporal_mismatch,What are the exact finalized protocol parameters and validator slot counts for Ethereum in the year 2050?,ABSTAINED_INSUFFICIENT_EVIDENCE,0.0,0,3,57.33
-q_abst_6_nonexistent_configuration,How do you configure the --enable-infinite-throughput flag in PostgreSQL B-Tree indexes?,ABSTAINED_INSUFFICIENT_EVIDENCE,0.0,0,3,63.85
+q_fact_1_raft_subproblems,How does Raft break consensus into subproblems?,SUCCESS,0.8797,3,1,3132.36
+q_fact_2_raft_timeouts,What election timeout range does Raft use to prevent split votes?,SUCCESS,0.9021,3,1,746.7
+q_fact_3_lsm_trees,Why do LSM trees perform better than B-Trees on write-heavy workloads?,ABSTAINED_INSUFFICIENT_EVIDENCE,0.0,3,1,532.94
+q_fact_4_aries_passes,What are the three passes performed by the ARIES recovery algorithm in WAL?,SUCCESS,0.8696,3,1,558.79
+q_fact_5_hnsw_routing,How does the HNSW graph achieve logarithmic search complexity for vector embeddings?,SUCCESS,0.8687,3,1,660.87
+q_fact_6_tls_rtt,How does TLS 1.3 reduce handshake latency to a single round-trip?,ABSTAINED_INSUFFICIENT_EVIDENCE,0.0,3,1,622.16
+q_comp_1_eth_vs_sol,Compare Ethereum and Solana consensus mechanisms regarding finality and validator architecture.,SUCCESS,0.789,3,2,806.62
+q_comp_2_raft_vs_paxos,Compare Raft and Paxos regarding proposal handling and leader contention.,SUCCESS,0.7116,3,2,664.25
+q_comp_3_snarks_vs_starks,What are the trade-offs between zk-SNARKs and zk-STARKs regarding trusted setups and proof sizes?,SUCCESS,0.7707,3,2,641.08
+q_comp_4_btree_vs_lsm,Compare B-Tree indexes and LSM trees regarding read and write optimization trade-offs.,ABSTAINED_INSUFFICIENT_EVIDENCE,0.0,0,3,33.16
+q_comp_5_range_vs_hash_sharding,Compare range-based partitioning and hash-based partitioning in distributed database sharding.,SUCCESS,0.879,3,2,605.65
+q_comp_6_tendermint_vs_pbft,Compare the quorum requirements and validator scalability of Tendermint BFT and classical PBFT.,ABSTAINED_INSUFFICIENT_EVIDENCE,0.0,0,3,30.67
+q_multi_1_pbft_vs_raft_faults,What is the fault tolerance threshold difference between Raft and PBFT in terms of node count?,ABSTAINED_INSUFFICIENT_EVIDENCE,0.0,0,4,134.98
+q_multi_2_mvcc_wal_durability,How do databases combine MVCC snapshots and Write-Ahead Logging to achieve non-blocking reads with durability?,SUCCESS,0.8695,3,1,545.2
+q_multi_3_blockchain_finality_times,"How do the block production and finality times differ across Bitcoin, Ethereum, and Solana?",ABSTAINED_INSUFFICIENT_EVIDENCE,0.0,0,3,44.05
+q_multi_4_cap_vs_2pc,Why does Two-Phase Commit prioritize Consistency over Availability during network partitions under the CAP theorem?,ABSTAINED_INSUFFICIENT_EVIDENCE,0.0,3,1,471.88
+q_multi_5_bloom_filter_lsm,How do Bloom filters prevent unnecessary disk access in LSM-tree SSTables?,ABSTAINED_INSUFFICIENT_EVIDENCE,0.0,0,3,39.46
+q_multi_6_vector_indexing_tradeoffs,How do HNSW and IVF-PQ approach the trade-off between memory footprint and search speed in vector databases?,ABSTAINED_INSUFFICIENT_EVIDENCE,0.0,0,3,33.79
+q_abst_1_unindexed_domain_quantum,What quantum error correction code is used in the Falcon processor?,ABSTAINED_OUT_OF_SCOPE,0.0,0,0,0.11
+q_abst_2_unindexed_domain_biology,What lipid nanoparticle formulation is used to encapsulate mRNA in modern vaccines?,ABSTAINED_INSUFFICIENT_EVIDENCE,0.0,0,3,46.78
+q_abst_3_secret_credentials,What is the production private validator signing key for the primary Ethereum validator cluster?,ABSTAINED_INSUFFICIENT_EVIDENCE,0.0,0,3,46.22
+q_abst_4_false_premise_contradiction,Explain how the Raft consensus protocol tolerates malicious Byzantine faults and arbitrary validator collusions.,SUCCESS,0.9135,3,1,827.62
+q_abst_5_future_temporal_mismatch,What are the exact finalized protocol parameters and validator slot counts for Ethereum in the year 2050?,ABSTAINED_INSUFFICIENT_EVIDENCE,0.0,0,3,42.21
+q_abst_6_nonexistent_configuration,How do you configure the --enable-infinite-throughput flag in PostgreSQL B-Tree indexes?,ABSTAINED_INSUFFICIENT_EVIDENCE,0.0,0,3,48.91

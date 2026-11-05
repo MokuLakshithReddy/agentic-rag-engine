@@ -45,11 +45,15 @@ class SparseRetriever:
         self,
         query: str,
         top_k: Optional[int] = None,
-        filter_metadata: Optional[Dict[str, Any]] = None
+        filter_metadata: Optional[Dict[str, Any]] = None,
+        cancel_token: Optional[Any] = None
     ) -> List[EvidenceChunk]:
         """
-        Executes BM25 keyword search.
+        Executes BM25 keyword search with cooperative cancellation check.
         """
+        if cancel_token and getattr(cancel_token, "is_set", lambda: False)():
+            return []
+
         k = top_k or self.top_k
         if not self._is_indexed or self.bm25 is None or not self.chunks:
             return []
@@ -66,6 +70,8 @@ class SparseRetriever:
 
         results: List[EvidenceChunk] = []
         for idx in ranked_indices:
+            if cancel_token and getattr(cancel_token, "is_set", lambda: False)():
+                break
             raw_s = float(raw_scores[idx])
             if raw_s <= 0.0:
                 continue

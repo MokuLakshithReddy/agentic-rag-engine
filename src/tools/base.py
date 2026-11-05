@@ -27,6 +27,14 @@ def _process_target_wrapper(queue: multiprocessing.Queue, func: Callable, args: 
         queue.put({"success": False, "data": None, "error": str(e)})
 
 
+def _standalone_tool_execute(tool: Any, kwargs: dict) -> List[EvidenceChunk]:
+    """
+    Top-level module function for executing tool logic inside an isolated process
+    without module or closure resolution failures across Windows/Linux.
+    """
+    return tool._execute(**kwargs)
+
+
 def execute_with_process_isolation(
     func: Callable,
     args: tuple = (),
@@ -87,21 +95,61 @@ class BaseTool(ABC):
             )
         return cls._shared_executor
 
-    def __init__(self, name: str, description: str, timeout_sec: float = 5.0):
+    def __init__(
+        self,
+        name: str,
+        description: str,
+        timeout_sec: float = 5.0,
+        process_isolated: bool = False
+    ):
         self.name = name
         self.description = description
         self.timeout_sec = timeout_sec
+        self.process_isolated = process_isolated
 
     @abstractmethod
     def _execute(self, **kwargs) -> List[EvidenceChunk]:
         """Tool specific execution logic."""
         pass
 
-    def run(self, **kwargs) -> Dict[str, Any]:
+    def run_isolated(self, **kwargs) -> Dict[str, Any]:
         """
-        Executes the tool with bounded concurrency and cancellation tracking.
-        Prevents queue saturation and long-running worker exhaustion.
+        Executes the tool inside an isolated OS process with hard process termination on timeout.
+        Guarantees that hung or slow processes are killed (SIGTERM + SIGKILL) without leaving
+        dangling background threads or exhausting shared threadpools.
         """
+        start_time = time.time()
+        record = ToolCallRecord(
+            tool_name=self.name,
+            query_input=str(kwargs.get("query", kwargs.get("subqueries", "")))[:200]
+        )
+        res = execute_with_process_isolation(
+            _standalone_tool_execute,
+            args=(self, kwargs),
+            timeout_sec=self.timeout_sec
+        )
+        elapsed_ms = (time.time() - start_time) * 1000.0
+        record.execution_time_ms = round(elapsed_ms, 2)
+        if res.get("success"):
+            data = res.get("data", [])
+            record.success = True
+            record.results_count = len(data)
+            return {"success": True, "data": data, "record": record}
+        else:
+            record.success = False
+            record.error_message = res.get("error", f"Tool hard timed out or failed in isolated process after {self.timeout_sec}s.")
+            record.results_count = 0
+            return {"success": False, "data": [], "record": record, "error": record.error_message}
+
+    def run(self, isolate_process: Optional[bool] = None, **kwargs) -> Dict[str, Any]:
+        """
+        Executes the tool with bounded concurrency, cancellation tracking, and timeout guarantees.
+        When isolate_process is True (or self.process_isolated is True), delegates to run_isolated().
+        """
+        use_isolation = self.process_isolated if isolate_process is None else isolate_process
+        if use_isolation:
+            return self.run_isolated(**kwargs)
+
         start_time = time.time()
         record = ToolCallRecord(
             tool_name=self.name,

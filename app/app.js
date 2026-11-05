@@ -2,9 +2,18 @@
 document.addEventListener("DOMContentLoaded", () => {
   const API_BASE = window.location.origin;
 
-  // Ephemeral Browser Session Management
+  // Ephemeral Browser Session & Tenant Management
   let sessionToken = sessionStorage.getItem("rag_session_token");
   let customApiKey = sessionStorage.getItem("rag_user_api_key");
+  let currentUsername = sessionStorage.getItem("rag_username") || "Guest";
+  let currentTenantId = sessionStorage.getItem("rag_tenant_id") || "guest_sandbox";
+
+  function updateTenantBadge() {
+    const badgeTenant = document.getElementById("badge-tenant");
+    if (badgeTenant) {
+      badgeTenant.textContent = `User: ${currentUsername} (${currentTenantId})`;
+    }
+  }
 
   async function getAuthHeaders() {
     const headers = { "Content-Type": "application/json" };
@@ -18,7 +27,12 @@ document.addEventListener("DOMContentLoaded", () => {
         if (res.ok) {
           const data = await res.json();
           sessionToken = data.session_token;
+          currentTenantId = data.tenant_id;
+          currentUsername = `Guest (${data.tenant_id})`;
           sessionStorage.setItem("rag_session_token", sessionToken);
+          sessionStorage.setItem("rag_tenant_id", currentTenantId);
+          sessionStorage.setItem("rag_username", currentUsername);
+          updateTenantBadge();
         }
       } catch (err) {
         console.warn("Session token handshake deferred:", err);
@@ -29,6 +43,8 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     return headers;
   }
+
+  updateTenantBadge();
 
   // DOM Elements
   const navButtons = document.querySelectorAll(".nav-btn");
@@ -384,5 +400,156 @@ document.addEventListener("DOMContentLoaded", () => {
       btnRunBenchmark.disabled = false;
       btnRunBenchmark.textContent = "Re-Run Benchmark";
     }
+  });
+
+  // ==========================================
+  // Authentication & Tenant Modal Management
+  // ==========================================
+  const authModal = document.getElementById("auth-modal");
+  const btnAuthToggle = document.getElementById("btn-auth-toggle");
+  const btnCloseModal = document.getElementById("btn-close-modal");
+  const tabBtnLogin = document.getElementById("tab-btn-login");
+  const tabBtnRegister = document.getElementById("tab-btn-register");
+  const tabBtnGuest = document.getElementById("tab-btn-guest");
+  const authForm = document.getElementById("auth-form");
+  const authUsername = document.getElementById("auth-username");
+  const authPassword = document.getElementById("auth-password");
+  const authTenant = document.getElementById("auth-tenant");
+  const groupUsername = document.getElementById("group-username");
+  const groupPassword = document.getElementById("group-password");
+  const groupTenant = document.getElementById("group-tenant");
+  const authError = document.getElementById("auth-error");
+  const btnAuthSubmit = document.getElementById("btn-auth-submit");
+  const btnGuestSubmit = document.getElementById("btn-guest-submit");
+  const btnAuthLogout = document.getElementById("btn-auth-logout");
+  const authCurrentDesc = document.getElementById("auth-current-desc");
+
+  let currentAuthTab = "login";
+
+  function setAuthTab(tab) {
+    currentAuthTab = tab;
+    authError.classList.add("hidden");
+    authError.textContent = "";
+
+    [tabBtnLogin, tabBtnRegister, tabBtnGuest].forEach(btn => btn?.classList.remove("active"));
+
+    if (tab === "login") {
+      tabBtnLogin?.classList.add("active");
+      groupUsername?.classList.remove("hidden");
+      groupPassword?.classList.remove("hidden");
+      groupTenant?.classList.add("hidden");
+      btnAuthSubmit?.classList.remove("hidden");
+      btnGuestSubmit?.classList.add("hidden");
+      if (btnAuthSubmit) btnAuthSubmit.textContent = "Sign In";
+    } else if (tab === "register") {
+      tabBtnRegister?.classList.add("active");
+      groupUsername?.classList.remove("hidden");
+      groupPassword?.classList.remove("hidden");
+      groupTenant?.classList.remove("hidden");
+      btnAuthSubmit?.classList.remove("hidden");
+      btnGuestSubmit?.classList.add("hidden");
+      if (btnAuthSubmit) btnAuthSubmit.textContent = "Register Account";
+    } else if (tab === "guest") {
+      tabBtnGuest?.classList.add("active");
+      groupUsername?.classList.add("hidden");
+      groupPassword?.classList.add("hidden");
+      groupTenant?.classList.add("hidden");
+      btnAuthSubmit?.classList.add("hidden");
+      btnGuestSubmit?.classList.remove("hidden");
+    }
+  }
+
+  btnAuthToggle?.addEventListener("click", () => {
+    if (authCurrentDesc) {
+      authCurrentDesc.textContent = `Active User: ${currentUsername} | Tenant: ${currentTenantId}`;
+    }
+    authModal?.classList.remove("hidden");
+  });
+
+  btnCloseModal?.addEventListener("click", () => {
+    authModal?.classList.add("hidden");
+  });
+
+  tabBtnLogin?.addEventListener("click", () => setAuthTab("login"));
+  tabBtnRegister?.addEventListener("click", () => setAuthTab("register"));
+  tabBtnGuest?.addEventListener("click", () => setAuthTab("guest"));
+
+  authForm?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    authError.classList.add("hidden");
+
+    const username = authUsername?.value.trim();
+    const password = authPassword?.value.trim();
+    const tenantId = authTenant?.value.trim();
+
+    try {
+      let endpoint = currentAuthTab === "login" ? `${API_BASE}/v1/auth/login` : `${API_BASE}/v1/auth/register`;
+      let payload = { username, password };
+      if (currentAuthTab === "register" && tenantId) {
+        payload.tenant_id = tenantId;
+      }
+
+      const res = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.detail || "Authentication request failed.");
+      }
+
+      sessionToken = data.session_token;
+      currentTenantId = data.tenant_id;
+      currentUsername = username;
+      sessionStorage.setItem("rag_session_token", sessionToken);
+      sessionStorage.setItem("rag_tenant_id", currentTenantId);
+      sessionStorage.setItem("rag_username", currentUsername);
+
+      updateTenantBadge();
+      authModal?.classList.add("hidden");
+      loadInitialStats();
+      loadIndexedDocuments();
+    } catch (err) {
+      authError.textContent = err.message;
+      authError.classList.remove("hidden");
+    }
+  });
+
+  btnGuestSubmit?.addEventListener("click", async () => {
+    try {
+      const res = await fetch(`${API_BASE}/v1/auth/session`, { method: "POST" });
+      if (!res.ok) throw new Error("Failed to create guest session.");
+      const data = await res.json();
+      sessionToken = data.session_token;
+      currentTenantId = data.tenant_id;
+      currentUsername = `Guest (${data.tenant_id})`;
+      sessionStorage.setItem("rag_session_token", sessionToken);
+      sessionStorage.setItem("rag_tenant_id", currentTenantId);
+      sessionStorage.setItem("rag_username", currentUsername);
+
+      updateTenantBadge();
+      authModal?.classList.add("hidden");
+      loadInitialStats();
+      loadIndexedDocuments();
+    } catch (err) {
+      authError.textContent = err.message;
+      authError.classList.remove("hidden");
+    }
+  });
+
+  btnAuthLogout?.addEventListener("click", async () => {
+    sessionStorage.removeItem("rag_session_token");
+    sessionStorage.removeItem("rag_tenant_id");
+    sessionStorage.removeItem("rag_username");
+    sessionToken = null;
+    customApiKey = null;
+    currentUsername = "Guest";
+    currentTenantId = "guest_sandbox";
+    await getAuthHeaders();
+    authModal?.classList.add("hidden");
+    loadInitialStats();
+    loadIndexedDocuments();
   });
 });
