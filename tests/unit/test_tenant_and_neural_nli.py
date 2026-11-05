@@ -246,6 +246,7 @@ def test_process_isolated_capacity_limit_enforced():
 
 
 def test_invitation_role_validation_enforced(tmp_path):
+    from api.schemas import InvitationRole
     auth_file = tmp_path / "test_users.json"
     mgr = UserAuthManager(storage_path=str(auth_file))
     alice = mgr.register_user("alice_admin", "admin_pass_123")
@@ -253,7 +254,7 @@ def test_invitation_role_validation_enforced(tmp_path):
     # Valid roles
     code1 = mgr.create_invitation(alice.tenant_id, alice.user_id, role="user")
     assert code1.startswith("inv_")
-    code2 = mgr.create_invitation(alice.tenant_id, alice.user_id, role="admin")
+    code2 = mgr.create_invitation(alice.tenant_id, alice.user_id, role=InvitationRole.ADMIN)
     assert code2.startswith("inv_")
 
     # Invalid roles must raise ValueError
@@ -262,6 +263,32 @@ def test_invitation_role_validation_enforced(tmp_path):
 
     with pytest.raises(ValueError, match="Invalid role"):
         mgr.create_invitation(alice.tenant_id, alice.user_id, role="root")
+
+    with pytest.raises(ValueError, match="Invalid role"):
+        mgr.create_invitation(alice.tenant_id, alice.user_id, role="guest")
+
+
+def test_real_retrieval_tool_through_process_pool(tmp_path):
+    """
+    Verifies that real retrieval tools execute through the isolated process pool
+    and return populated evidence chunks to the parent without Windows feeder races.
+    """
+    from src.ingestion.indexer import KnowledgeBase
+
+    kb = KnowledgeBase(storage_dir=str(tmp_path / "proc_indices"))
+    kb.index_document("doc_proc_1", "Raft consensus algorithm uses randomized timers for leader election.")
+
+    sparse_tool = SparseRetrievalTool(kb=kb, timeout_sec=5.0, process_isolated=True)
+    res_sparse = sparse_tool.run(query="Raft leader election")
+    assert res_sparse["success"] is True
+    assert len(res_sparse["data"]) > 0
+    assert "leader election" in res_sparse["data"][0].content.lower()
+
+    dense_tool = DenseRetrievalTool(kb=kb, timeout_sec=5.0, process_isolated=True)
+    res_dense = dense_tool.run(query="consensus algorithm")
+    assert res_dense["success"] is True
+    assert len(res_dense["data"]) > 0
+    assert "consensus" in res_dense["data"][0].content.lower()
 
 
 def test_bearer_token_hashing_in_session_store(tmp_path):

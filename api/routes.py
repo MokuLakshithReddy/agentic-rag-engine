@@ -32,7 +32,8 @@ from api.schemas import (
     AuthTokenResponse,
     ChangePasswordRequest,
     CreateInvitationRequest,
-    InvitationResponse
+    InvitationResponse,
+    InvitationRole
 )
 from api.auth import UserAuthManager, AuthContext
 from api.tenant_manager import TenantKnowledgeBaseManager

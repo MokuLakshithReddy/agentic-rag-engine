@@ -7,6 +7,7 @@ from abc import ABC, abstractmethod
 from typing import Dict, Any, List, Optional, Callable
 import time
 import threading
+import queue as py_queue
 import multiprocessing
 import concurrent.futures
 from pydantic import BaseModel, Field
@@ -45,6 +46,7 @@ def execute_with_process_isolation(
     Executes a function inside an isolated operating system process.
     If the operation exceeds timeout_sec, the process is forcefully terminated
     (SIGTERM / TerminateProcess) and killed, releasing all OS resources.
+    Uses bounded blocking queue retrieval to eliminate Windows multiprocessing feeder races.
     """
     if kwargs is None:
         kwargs = {}
@@ -53,22 +55,41 @@ def execute_with_process_isolation(
     queue = ctx.Queue()
     proc = ctx.Process(target=_process_target_wrapper, args=(queue, func, args, kwargs))
     proc.start()
-    proc.join(timeout=timeout_sec)
 
+    result = None
+    timed_out = False
+    try:
+        # Bounded blocking get: waits for the worker or feeder thread to deliver the result
+        result = queue.get(timeout=timeout_sec)
+    except py_queue.Empty:
+        timed_out = True
+
+    # Process cleanup
     if proc.is_alive():
         proc.terminate()
-        proc.join(timeout=0.2)
+        proc.join(timeout=0.3)
         if proc.is_alive():
             proc.kill()
             proc.join(timeout=0.1)
+    else:
+        proc.join(timeout=0.5)
+
+    try:
+        queue.close()
+        queue.join_thread()
+    except Exception:
+        pass
+
+    if timed_out:
         return {
             "success": False,
             "data": None,
             "error": f"Process hard-killed after exceeding {timeout_sec}s timeout."
         }
 
-    if not queue.empty():
-        return queue.get_nowait()
+    if result is not None:
+        return result
+
     return {"success": False, "data": None, "error": "Process completed without output."}
 
 

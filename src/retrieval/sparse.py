@@ -63,16 +63,31 @@ class SparseRetriever:
             return []
 
         raw_scores = self.bm25.get_scores(tokens)
-        max_score = max(raw_scores) if len(raw_scores) > 0 and max(raw_scores) > 0 else 1.0
+        query_token_set = set(tokens)
+
+        # In BM25Okapi, if a word appears in all or most documents in tiny corpora (<=2 docs),
+        # classical IDF can be <= 0. Adjust matching chunks to prevent discarding valid hits.
+        adjusted_scores: List[float] = []
+        for idx in range(len(raw_scores)):
+            s = float(raw_scores[idx])
+            chunk_tokens = set(self._tokenize(self.chunks[idx].content))
+            matches = bool(query_token_set.intersection(chunk_tokens))
+            if matches and s <= 0.0:
+                s = 0.5
+            elif not matches:
+                s = 0.0
+            adjusted_scores.append(s)
+
+        max_score = max(adjusted_scores) if len(adjusted_scores) > 0 and max(adjusted_scores) > 0 else 1.0
 
         # Sort indices by descending score
-        ranked_indices = sorted(range(len(raw_scores)), key=lambda i: raw_scores[i], reverse=True)
+        ranked_indices = sorted(range(len(adjusted_scores)), key=lambda i: adjusted_scores[i], reverse=True)
 
         results: List[EvidenceChunk] = []
         for idx in ranked_indices:
             if cancel_token and getattr(cancel_token, "is_set", lambda: False)():
                 break
-            raw_s = float(raw_scores[idx])
+            raw_s = adjusted_scores[idx]
             if raw_s <= 0.0:
                 continue
             norm_score = round(raw_s / max_score, 4)

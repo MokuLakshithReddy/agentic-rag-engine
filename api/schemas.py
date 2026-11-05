@@ -13,6 +13,11 @@ class UserRole(str, Enum):
     GUEST = "guest"
 
 
+class InvitationRole(str, Enum):
+    USER = "user"
+    ADMIN = "admin"
+
+
 class IngestDocumentRequest(BaseModel):
     doc_id: str = Field(..., description="Unique document identifier")
     text: str = Field(..., description="Document content text")
@@ -78,13 +83,13 @@ class ChangePasswordRequest(BaseModel):
 
 
 class CreateInvitationRequest(BaseModel):
-    role: UserRole = Field(default=UserRole.USER, description="Assigned role for joining member ('user' or 'admin')")
+    role: InvitationRole = Field(default=InvitationRole.USER, description="Assigned role for joining member ('user' or 'admin')")
 
 
 class InvitationResponse(BaseModel):
     invite_code: str
     tenant_id: str
-    role: UserRole
+    role: InvitationRole
 
 
 
