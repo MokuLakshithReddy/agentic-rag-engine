@@ -81,9 +81,12 @@ class BaseTool(ABC):
 
     MAX_CONCURRENT_WORKERS = 8
     MAX_PENDING_QUEUE = 16
+    MAX_CONCURRENT_PROCESSES = 4
+    MAX_PENDING_PROCESS_QUEUE = 8
 
     _shared_executor: Optional[concurrent.futures.ThreadPoolExecutor] = None
     _active_tasks: int = 0
+    _active_processes: int = 0
     _lock = threading.Lock()
 
     @classmethod
@@ -114,32 +117,53 @@ class BaseTool(ABC):
 
     def run_isolated(self, **kwargs) -> Dict[str, Any]:
         """
-        Executes the tool inside an isolated OS process with hard process termination on timeout.
-        Guarantees that hung or slow processes are killed (SIGTERM + SIGKILL) without leaving
-        dangling background threads or exhausting shared threadpools.
+        Executes the tool inside an isolated OS process with hard process termination on timeout
+        and strictly bounded process concurrency limits.
         """
         start_time = time.time()
         record = ToolCallRecord(
             tool_name=self.name,
             query_input=str(kwargs.get("query", kwargs.get("subqueries", "")))[:200]
         )
-        res = execute_with_process_isolation(
-            _standalone_tool_execute,
-            args=(self, kwargs),
-            timeout_sec=self.timeout_sec
-        )
-        elapsed_ms = (time.time() - start_time) * 1000.0
-        record.execution_time_ms = round(elapsed_ms, 2)
-        if res.get("success"):
-            data = res.get("data", [])
-            record.success = True
-            record.results_count = len(data)
-            return {"success": True, "data": data, "record": record}
-        else:
-            record.success = False
-            record.error_message = res.get("error", f"Tool hard timed out or failed in isolated process after {self.timeout_sec}s.")
-            record.results_count = 0
-            return {"success": False, "data": [], "record": record, "error": record.error_message}
+
+        # Enforce strict process capacity limit
+        with self._lock:
+            if self._active_processes >= (self.MAX_CONCURRENT_PROCESSES + self.MAX_PENDING_PROCESS_QUEUE):
+                record.execution_time_ms = 0.0
+                record.success = False
+                record.error_message = (
+                    f"Process capacity exceeded: worker process pool saturated "
+                    f"({self._active_processes} active/queued). Execution rejected."
+                )
+                return {
+                    "success": False,
+                    "data": [],
+                    "record": record,
+                    "error": record.error_message
+                }
+            BaseTool._active_processes += 1
+
+        try:
+            res = execute_with_process_isolation(
+                _standalone_tool_execute,
+                args=(self, kwargs),
+                timeout_sec=self.timeout_sec
+            )
+            elapsed_ms = (time.time() - start_time) * 1000.0
+            record.execution_time_ms = round(elapsed_ms, 2)
+            if res.get("success"):
+                data = res.get("data", [])
+                record.success = True
+                record.results_count = len(data)
+                return {"success": True, "data": data, "record": record}
+            else:
+                record.success = False
+                record.error_message = res.get("error", f"Tool hard timed out or failed in isolated process after {self.timeout_sec}s.")
+                record.results_count = 0
+                return {"success": False, "data": [], "record": record, "error": record.error_message}
+        finally:
+            with self._lock:
+                BaseTool._active_processes = max(0, BaseTool._active_processes - 1)
 
     def run(self, isolate_process: Optional[bool] = None, **kwargs) -> Dict[str, Any]:
         """

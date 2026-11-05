@@ -65,6 +65,7 @@ class UserAuthManager:
             self.tenants_path.parent.mkdir(parents=True, exist_ok=True)
         else:
             self.tenants_path = self.storage_path.parent / "tenants_registry.json"
+        self.sessions_path = self.storage_path.parent / "sessions.json"
 
         self.users: Dict[str, UserRecord] = {}
         self.tenants: Dict[str, TenantRecord] = {}
@@ -81,6 +82,29 @@ class UserAuthManager:
             salt.encode("utf-8"),
             100_000
         ).hex()
+
+    def _load_sessions(self) -> None:
+        if self.sessions_path.exists():
+            try:
+                with open(self.sessions_path, "r", encoding="utf-8") as f:
+                    sdata = json.load(f)
+                    now = time.time()
+                    for tok, sess in sdata.items():
+                        if sess.get("expires_at", 0) > now:
+                            self.active_sessions[tok] = sess
+            except Exception as e:
+                logger.warning(f"Failed to load sessions from {self.sessions_path}: {e}")
+
+    def _save_sessions(self) -> None:
+        try:
+            now = time.time()
+            valid_sessions = {tok: s for tok, s in self.active_sessions.items() if s.get("expires_at", 0) > now}
+            tmp_path = self.sessions_path.with_suffix(".tmp")
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(valid_sessions, f, indent=2)
+            tmp_path.replace(self.sessions_path)
+        except Exception as e:
+            logger.error(f"Failed to persist sessions: {e}")
 
     def _load_data(self) -> None:
         if self.storage_path.exists():
@@ -102,6 +126,8 @@ class UserAuthManager:
                         self.tenants[trec.tenant_id] = trec
             except Exception as e:
                 logger.warning(f"Failed to load tenants from {self.tenants_path}: {e}")
+
+        self._load_sessions()
 
     def _save_data(self) -> None:
         try:
@@ -146,6 +172,10 @@ class UserAuthManager:
                     admin_pass = secrets.token_urlsafe(24)
                     try:
                         bootstrap_file.write_text(admin_pass, encoding="utf-8")
+                        try:
+                            os.chmod(bootstrap_file, 0o600)
+                        except Exception:
+                            pass
                     except Exception as e:
                         logger.error(f"Failed to write bootstrap admin secret: {e}")
 
@@ -190,11 +220,11 @@ class UserAuthManager:
         if not password or len(password) < 6:
             raise ValueError("Password must be at least 6 characters.")
 
-        # Resolve tenant assignment
+        # Resolve tenant assignment and role
+        assigned_role = role
         if invitation_code and invitation_code.strip():
             code = invitation_code.strip()
             target_tenant = None
-            assigned_role = role
 
             for t in self.tenants.values():
                 if code in t.invitation_codes:
@@ -229,7 +259,7 @@ class UserAuthManager:
             password_hash=pw_hash,
             salt=salt,
             tenant_id=assigned_tenant_id,
-            role=role,
+            role=assigned_role,
             must_change_password=False
         )
         self.users[uname] = user
@@ -248,7 +278,7 @@ class UserAuthManager:
         return None
 
     def change_password(self, user_id: str, current_password: str, new_password: str) -> bool:
-        """Changes user password and clears must_change_password requirement."""
+        """Changes user password, updates active sessions, and cleans up bootstrap secret."""
         user = next((u for u in self.users.values() if u.user_id == user_id), None)
         if not user:
             return False
@@ -263,7 +293,23 @@ class UserAuthManager:
         user.salt = secrets.token_hex(16)
         user.password_hash = self._hash_password(new_password, user.salt)
         user.must_change_password = False
+
+        # Update any active sessions for this user so they don't hold stale must_change_password=True
+        for sess in self.active_sessions.values():
+            if sess.get("user_id") == user_id:
+                sess["must_change_password"] = False
+        self._save_sessions()
         self._save_data()
+
+        # Secure cleanup: purge one-time plaintext bootstrap secret file from disk once password is changed
+        bootstrap_file = self.storage_path.parent / ".bootstrap_admin_secret"
+        if bootstrap_file.exists():
+            try:
+                bootstrap_file.unlink(missing_ok=True)
+                logger.info("Purged one-time bootstrap administrator secret from disk.")
+            except Exception as e:
+                logger.warning(f"Could not purge bootstrap secret file: {e}")
+
         return True
 
     def create_invitation(self, tenant_id: str, creator_user_id: str, role: str = "user") -> str:
@@ -287,6 +333,8 @@ class UserAuthManager:
         expired = [tok for tok, sess in self.active_sessions.items() if now > sess.get("expires_at", 0)]
         for tok in expired:
             self.active_sessions.pop(tok, None)
+        if expired:
+            self._save_sessions()
 
     def create_session(self, user: UserRecord) -> Dict[str, Any]:
         self.clean_expired_sessions()
@@ -302,6 +350,7 @@ class UserAuthManager:
             "expires_at": expires_at
         }
         self.active_sessions[token] = session_info
+        self._save_sessions()
         return {
             "session_token": token,
             "user_id": user.user_id,
@@ -327,6 +376,7 @@ class UserAuthManager:
             "expires_at": expires_at
         }
         self.active_sessions[token] = session_info
+        self._save_sessions()
         return {
             "session_token": token,
             "user_id": guest_id,
@@ -339,7 +389,12 @@ class UserAuthManager:
 
     def validate_session(self, token: str) -> Optional[Dict[str, Any]]:
         self.clean_expired_sessions()
-        sess = self.active_sessions.get(token.strip())
+        tok = token.strip()
+        sess = self.active_sessions.get(tok)
+        if not sess and self.sessions_path.exists():
+            # Sync across multiple worker processes
+            self._load_sessions()
+            sess = self.active_sessions.get(tok)
         if sess and time.time() < sess.get("expires_at", 0):
             return sess
         return None

@@ -62,17 +62,24 @@ def test_tenant_invitation_code_membership(tmp_path):
     alice = mgr.register_user("alice", "alice_pass_123")
     alice_tenant = alice.tenant_id
 
-    # Alice creates an invitation code
-    code = mgr.create_invitation(tenant_id=alice_tenant, creator_user_id=alice.user_id, role="user")
-    assert code.startswith("inv_")
+    # Alice creates an invitation code for an admin role
+    code_admin = mgr.create_invitation(tenant_id=alice_tenant, creator_user_id=alice.user_id, role="admin")
+    assert code_admin.startswith("inv_")
 
-    # Bob registers using the invitation code
-    bob = mgr.register_user("bob", "bob_pass_123", invitation_code=code)
-    assert bob.tenant_id == alice_tenant  # Joined Alice's organization
+    # Bob registers using the admin invitation code -> must inherit role="admin"
+    bob = mgr.register_user("bob", "bob_pass_123", invitation_code=code_admin)
+    assert bob.tenant_id == alice_tenant
+    assert bob.role == "admin"
+
+    # Alice creates a standard user invitation code
+    code_user = mgr.create_invitation(tenant_id=alice_tenant, creator_user_id=alice.user_id, role="user")
+    charlie = mgr.register_user("charlie", "charlie_pass_123", invitation_code=code_user)
+    assert charlie.tenant_id == alice_tenant
+    assert charlie.role == "user"
 
     # Using the same invitation code again fails
     with pytest.raises(ValueError, match="Invalid or expired"):
-        mgr.register_user("charlie", "charlie_pass_123", invitation_code=code)
+        mgr.register_user("dave", "dave_pass_123", invitation_code=code_user)
 
 
 def test_admin_bootstrap_secret_and_password_replacement(tmp_path, monkeypatch):
@@ -93,6 +100,10 @@ def test_admin_bootstrap_secret_and_password_replacement(tmp_path, monkeypatch):
     assert admin_auth is not None
     assert admin_auth.must_change_password is True
 
+    # Pre-existing session before password replacement
+    session_pre = mgr.create_session(admin_auth)
+    assert session_pre["must_change_password"] is True
+
     # Password change required
     mgr.change_password(
         user_id=admin_auth.user_id,
@@ -104,6 +115,29 @@ def test_admin_bootstrap_secret_and_password_replacement(tmp_path, monkeypatch):
     updated_admin = mgr.authenticate_user("admin", "ReplacedAdminPassword2026!")
     assert updated_admin is not None
     assert updated_admin.must_change_password is False
+
+    # Existing active session should be updated in-place (no stale lock state)
+    val_sess = mgr.validate_session(session_pre["session_token"])
+    assert val_sess is not None
+    assert val_sess["must_change_password"] is False
+
+    # Bootstrap secret file must be securely purged from disk
+    assert not secret_file.exists()
+
+
+def test_session_persistence_across_manager_restarts(tmp_path):
+    auth_file = tmp_path / "test_users.json"
+    mgr1 = UserAuthManager(storage_path=str(auth_file))
+    user = mgr1.register_user("dave", "secure_pass_123")
+    sess = mgr1.create_session(user)
+    token = sess["session_token"]
+
+    # mgr2 simulates another process or server restart loading persisted sessions
+    mgr2 = UserAuthManager(storage_path=str(auth_file))
+    val = mgr2.validate_session(token)
+    assert val is not None
+    assert val["user_id"] == user.user_id
+    assert val["username"] == "dave"
 
 
 def test_tenant_path_traversal_guards(tmp_path):
@@ -191,6 +225,15 @@ def test_process_isolated_tool_hard_timeout_termination():
     assert elapsed < 2.0
     assert res["success"] is False
     assert "timeout" in res["error"].lower() or "hard-killed" in res["error"].lower()
+
+
+def test_process_isolated_capacity_limit_enforced(monkeypatch):
+    tool = HangingRetrievalTool(timeout_sec=0.5, process_isolated=True)
+    # Simulate saturated isolated process pool
+    monkeypatch.setattr(BaseTool, "_active_processes", BaseTool.MAX_CONCURRENT_PROCESSES + BaseTool.MAX_PENDING_PROCESS_QUEUE)
+    res = tool.run_isolated(query="overflow")
+    assert res["success"] is False
+    assert "Process capacity exceeded" in res["error"]
 
 
 def test_verifier_deterministic_fallback_and_reporting(monkeypatch):

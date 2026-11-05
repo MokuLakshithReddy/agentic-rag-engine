@@ -1,6 +1,6 @@
 # Agentic RAG Engine: Autonomous Multi-Step Knowledge Research System
 
-[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/License-Restricted%20Research%20License-red.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12-blue)](pyproject.toml)
 [![Architecture](https://img.shields.io/badge/Architecture-Stateful%20Agentic%20RAG-indigo)](docs/ARCHITECTURE.md)
 [![Verification](https://img.shields.io/badge/Verification-Calibrated%20Citations-green)](docs/AGENT_WORKFLOW.md)
@@ -154,5 +154,5 @@ python -c "from src.evaluation.benchmark import BenchmarkRunner; runner = Benchm
 
 ## License
 
-Licensed under the Apache License 2.0. See [LICENSE](LICENSE) for details.
+Restricted Evaluation and Research License. Copyright (c) 2026 Moku Lakshith Reddy. All rights reserved. See [LICENSE](LICENSE) for terms.
 
