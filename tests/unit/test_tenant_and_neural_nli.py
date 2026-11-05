@@ -227,13 +227,62 @@ def test_process_isolated_tool_hard_timeout_termination():
     assert "timeout" in res["error"].lower() or "hard-killed" in res["error"].lower()
 
 
-def test_process_isolated_capacity_limit_enforced(monkeypatch):
+def test_process_isolated_capacity_limit_enforced():
+    pool = BaseTool._get_process_pool()
     tool = HangingRetrievalTool(timeout_sec=0.5, process_isolated=True)
-    # Simulate saturated isolated process pool
-    monkeypatch.setattr(BaseTool, "_active_processes", BaseTool.MAX_CONCURRENT_PROCESSES + BaseTool.MAX_PENDING_PROCESS_QUEUE)
-    res = tool.run_isolated(query="overflow")
-    assert res["success"] is False
-    assert "Process capacity exceeded" in res["error"]
+
+    # When queue is full (MAX_QUEUE_SIZE = 8)
+    with pool._lock:
+        old_queued = pool._queued_requests
+        pool._queued_requests = pool.MAX_QUEUE_SIZE
+
+    try:
+        res = tool.run_isolated(query="overflow")
+        assert res["success"] is False
+        assert "Process capacity exceeded: worker queue saturated" in res["error"]
+    finally:
+        with pool._lock:
+            pool._queued_requests = old_queued
+
+
+def test_invitation_role_validation_enforced(tmp_path):
+    auth_file = tmp_path / "test_users.json"
+    mgr = UserAuthManager(storage_path=str(auth_file))
+    alice = mgr.register_user("alice_admin", "admin_pass_123")
+
+    # Valid roles
+    code1 = mgr.create_invitation(alice.tenant_id, alice.user_id, role="user")
+    assert code1.startswith("inv_")
+    code2 = mgr.create_invitation(alice.tenant_id, alice.user_id, role="admin")
+    assert code2.startswith("inv_")
+
+    # Invalid roles must raise ValueError
+    with pytest.raises(ValueError, match="Invalid role"):
+        mgr.create_invitation(alice.tenant_id, alice.user_id, role="superuser")
+
+    with pytest.raises(ValueError, match="Invalid role"):
+        mgr.create_invitation(alice.tenant_id, alice.user_id, role="root")
+
+
+def test_bearer_token_hashing_in_session_store(tmp_path):
+    auth_file = tmp_path / "test_users.json"
+    mgr = UserAuthManager(storage_path=str(auth_file))
+    user = mgr.register_user("eve", "secure_pass_123")
+    sess = mgr.create_session(user)
+    raw_token = sess["session_token"]
+
+    # Verify that raw bearer token is NEVER stored in database plaintext
+    import sqlite3
+    import hashlib
+    db_path = mgr.sessions_db_path
+    conn = sqlite3.connect(str(db_path))
+    rows = conn.execute("SELECT token_hash FROM sessions").fetchall()
+    stored_hashes = [r[0] for r in rows]
+    conn.close()
+
+    assert raw_token not in stored_hashes
+    expected_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+    assert expected_hash in stored_hashes
 
 
 def test_verifier_deterministic_fallback_and_reporting(monkeypatch):

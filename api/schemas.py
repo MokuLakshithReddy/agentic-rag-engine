@@ -3,7 +3,14 @@ API Request and Response Pydantic Schemas.
 """
 
 from typing import List, Dict, Any, Optional
+from enum import Enum
 from pydantic import BaseModel, Field
+
+
+class UserRole(str, Enum):
+    USER = "user"
+    ADMIN = "admin"
+    GUEST = "guest"
 
 
 class IngestDocumentRequest(BaseModel):
@@ -71,13 +78,13 @@ class ChangePasswordRequest(BaseModel):
 
 
 class CreateInvitationRequest(BaseModel):
-    role: str = Field("user", description="Assigned role for joining member ('user' or 'admin')")
+    role: UserRole = Field(default=UserRole.USER, description="Assigned role for joining member ('user' or 'admin')")
 
 
 class InvitationResponse(BaseModel):
     invite_code: str
     tenant_id: str
-    role: str
+    role: UserRole
 
 
 

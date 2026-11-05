@@ -9,17 +9,125 @@ Enforces:
 4. Ephemeral guest sandboxing with isolated tenant partitions.
 """
 
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Union
 import os
 import time
 import json
 import logging
 import secrets
 import hashlib
+import sqlite3
 from pathlib import Path
 from pydantic import BaseModel, Field
+from api.schemas import UserRole
 
 logger = logging.getLogger("agentic_rag.auth")
+
+
+class TransactionalSessionStore:
+    """
+    Production-grade ACID transactional session repository.
+    Enforces:
+    1. Secure Bearer Token Protection: Session tokens are stored strictly as SHA-256 hashes;
+       plaintext bearer tokens never touch the database.
+    2. Multi-Worker Concurrency Safety: Backed by SQLite WAL mode and busy timeouts
+       (or Redis), eliminating file-overwrite race conditions across workers.
+    3. Atomic updates and cleanup across concurrent processes.
+    """
+
+    def __init__(self, db_path: Path):
+        self.db_path = Path(db_path).resolve()
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._init_db()
+
+    def _get_connection(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(str(self.db_path), timeout=10.0)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA synchronous=NORMAL;")
+        conn.execute("PRAGMA busy_timeout=5000;")
+        return conn
+
+    def _init_db(self) -> None:
+        with self._get_connection() as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS sessions (
+                    token_hash TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    username TEXT NOT NULL,
+                    tenant_id TEXT NOT NULL,
+                    role TEXT NOT NULL,
+                    must_change_password INTEGER NOT NULL DEFAULT 0,
+                    expires_at REAL NOT NULL,
+                    created_at REAL NOT NULL
+                );
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions (user_id);")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions (expires_at);")
+
+    @staticmethod
+    def _hash_token(raw_token: str) -> str:
+        return hashlib.sha256(raw_token.strip().encode("utf-8")).hexdigest()
+
+    def save_session(
+        self,
+        raw_token: str,
+        user_id: str,
+        username: str,
+        tenant_id: str,
+        role: str,
+        must_change_password: bool,
+        expires_at: float
+    ) -> None:
+        token_hash = self._hash_token(raw_token)
+        now = time.time()
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO sessions 
+                (token_hash, user_id, username, tenant_id, role, must_change_password, expires_at, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (token_hash, user_id, username, tenant_id, role, 1 if must_change_password else 0, expires_at, now)
+            )
+
+    def get_session(self, raw_token: str) -> Optional[Dict[str, Any]]:
+        token_hash = self._hash_token(raw_token)
+        now = time.time()
+        with self._get_connection() as conn:
+            cur = conn.execute(
+                """
+                SELECT token_hash, user_id, username, tenant_id, role, must_change_password, expires_at
+                FROM sessions
+                WHERE token_hash = ? AND expires_at > ?
+                """,
+                (token_hash, now)
+            )
+            row = cur.fetchone()
+            if row:
+                return {
+                    "token_hash": row["token_hash"],
+                    "user_id": row["user_id"],
+                    "username": row["username"],
+                    "tenant_id": row["tenant_id"],
+                    "role": row["role"],
+                    "must_change_password": bool(row["must_change_password"]),
+                    "expires_at": float(row["expires_at"])
+                }
+        return None
+
+    def update_user_password_change_flag(self, user_id: str, must_change_password: bool = False) -> None:
+        val = 1 if must_change_password else 0
+        with self._get_connection() as conn:
+            conn.execute(
+                "UPDATE sessions SET must_change_password = ? WHERE user_id = ?",
+                (val, user_id)
+            )
+
+    def clean_expired(self) -> None:
+        now = time.time()
+        with self._get_connection() as conn:
+            conn.execute("DELETE FROM sessions WHERE expires_at <= ?", (now,))
 
 
 class UserRecord(BaseModel):
@@ -65,7 +173,10 @@ class UserAuthManager:
             self.tenants_path.parent.mkdir(parents=True, exist_ok=True)
         else:
             self.tenants_path = self.storage_path.parent / "tenants_registry.json"
-        self.sessions_path = self.storage_path.parent / "sessions.json"
+
+        # Production transactional session database (ACID, SHA-256 hashed bearer tokens, WAL concurrency)
+        self.sessions_db_path = self.storage_path.parent / "sessions.db"
+        self.session_store = TransactionalSessionStore(self.sessions_db_path)
 
         self.users: Dict[str, UserRecord] = {}
         self.tenants: Dict[str, TenantRecord] = {}
@@ -82,29 +193,6 @@ class UserAuthManager:
             salt.encode("utf-8"),
             100_000
         ).hex()
-
-    def _load_sessions(self) -> None:
-        if self.sessions_path.exists():
-            try:
-                with open(self.sessions_path, "r", encoding="utf-8") as f:
-                    sdata = json.load(f)
-                    now = time.time()
-                    for tok, sess in sdata.items():
-                        if sess.get("expires_at", 0) > now:
-                            self.active_sessions[tok] = sess
-            except Exception as e:
-                logger.warning(f"Failed to load sessions from {self.sessions_path}: {e}")
-
-    def _save_sessions(self) -> None:
-        try:
-            now = time.time()
-            valid_sessions = {tok: s for tok, s in self.active_sessions.items() if s.get("expires_at", 0) > now}
-            tmp_path = self.sessions_path.with_suffix(".tmp")
-            with open(tmp_path, "w", encoding="utf-8") as f:
-                json.dump(valid_sessions, f, indent=2)
-            tmp_path.replace(self.sessions_path)
-        except Exception as e:
-            logger.error(f"Failed to persist sessions: {e}")
 
     def _load_data(self) -> None:
         if self.storage_path.exists():
@@ -126,8 +214,6 @@ class UserAuthManager:
                         self.tenants[trec.tenant_id] = trec
             except Exception as e:
                 logger.warning(f"Failed to load tenants from {self.tenants_path}: {e}")
-
-        self._load_sessions()
 
     def _save_data(self) -> None:
         try:
@@ -295,10 +381,10 @@ class UserAuthManager:
         user.must_change_password = False
 
         # Update any active sessions for this user so they don't hold stale must_change_password=True
+        self.session_store.update_user_password_change_flag(user_id=user_id, must_change_password=False)
         for sess in self.active_sessions.values():
             if sess.get("user_id") == user_id:
                 sess["must_change_password"] = False
-        self._save_sessions()
         self._save_data()
 
         # Secure cleanup: purge one-time plaintext bootstrap secret file from disk once password is changed
@@ -312,8 +398,12 @@ class UserAuthManager:
 
         return True
 
-    def create_invitation(self, tenant_id: str, creator_user_id: str, role: str = "user") -> str:
-        """Issues an organization membership invitation code."""
+    def create_invitation(self, tenant_id: str, creator_user_id: str, role: Union[str, UserRole] = UserRole.USER) -> str:
+        """Issues an organization membership invitation code with strict role validation."""
+        role_val = role.value if isinstance(role, UserRole) else str(role).strip().lower()
+        if role_val not in {UserRole.USER.value, UserRole.ADMIN.value}:
+            raise ValueError(f"Invalid role '{role}'. Allowed roles are 'user' and 'admin'.")
+
         tenant = self.tenants.get(tenant_id)
         if not tenant:
             raise ValueError(f"Tenant '{tenant_id}' not found.")
@@ -324,22 +414,30 @@ class UserAuthManager:
             raise PermissionError("Only tenant owners or system administrators can issue invitations.")
 
         code = f"inv_{secrets.token_urlsafe(16)}"
-        tenant.invitation_codes[code] = role
+        tenant.invitation_codes[code] = role_val
         self._save_data()
         return code
 
     def clean_expired_sessions(self) -> None:
+        self.session_store.clean_expired()
         now = time.time()
         expired = [tok for tok, sess in self.active_sessions.items() if now > sess.get("expires_at", 0)]
         for tok in expired:
             self.active_sessions.pop(tok, None)
-        if expired:
-            self._save_sessions()
 
     def create_session(self, user: UserRecord) -> Dict[str, Any]:
         self.clean_expired_sessions()
         token = secrets.token_urlsafe(32)
         expires_at = time.time() + self.session_ttl_sec
+        self.session_store.save_session(
+            raw_token=token,
+            user_id=user.user_id,
+            username=user.username,
+            tenant_id=user.tenant_id,
+            role=user.role,
+            must_change_password=user.must_change_password,
+            expires_at=expires_at
+        )
         session_info = {
             "token": token,
             "user_id": user.user_id,
@@ -350,7 +448,6 @@ class UserAuthManager:
             "expires_at": expires_at
         }
         self.active_sessions[token] = session_info
-        self._save_sessions()
         return {
             "session_token": token,
             "user_id": user.user_id,
@@ -366,6 +463,15 @@ class UserAuthManager:
         token = secrets.token_urlsafe(32)
         guest_id = f"guest_{token[:8]}"
         expires_at = time.time() + self.session_ttl_sec
+        self.session_store.save_session(
+            raw_token=token,
+            user_id=guest_id,
+            username=f"Guest ({guest_id})",
+            tenant_id=guest_id,
+            role="guest",
+            must_change_password=False,
+            expires_at=expires_at
+        )
         session_info = {
             "token": token,
             "user_id": guest_id,
@@ -376,7 +482,6 @@ class UserAuthManager:
             "expires_at": expires_at
         }
         self.active_sessions[token] = session_info
-        self._save_sessions()
         return {
             "session_token": token,
             "user_id": guest_id,
@@ -390,11 +495,10 @@ class UserAuthManager:
     def validate_session(self, token: str) -> Optional[Dict[str, Any]]:
         self.clean_expired_sessions()
         tok = token.strip()
-        sess = self.active_sessions.get(tok)
-        if not sess and self.sessions_path.exists():
-            # Sync across multiple worker processes
-            self._load_sessions()
-            sess = self.active_sessions.get(tok)
-        if sess and time.time() < sess.get("expires_at", 0):
+        sess = self.session_store.get_session(tok)
+        if sess:
             return sess
+        mem_sess = self.active_sessions.get(tok)
+        if mem_sess and time.time() < mem_sess.get("expires_at", 0):
+            return mem_sess
         return None

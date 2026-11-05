@@ -72,31 +72,104 @@ def execute_with_process_isolation(
     return {"success": False, "data": None, "error": "Process completed without output."}
 
 
+class IsolatedProcessPool:
+    """
+    True 4-worker process pool with an 8-request bounded waiting queue
+    and hard process kill on execution timeout.
+    """
+    MAX_WORKERS = 4
+    MAX_QUEUE_SIZE = 8
+
+    def __init__(self):
+        self._semaphore = threading.Semaphore(self.MAX_WORKERS)
+        self._lock = threading.Lock()
+        self._active_workers: int = 0
+        self._queued_requests: int = 0
+
+    @property
+    def active_workers(self) -> int:
+        with self._lock:
+            return self._active_workers
+
+    @property
+    def queued_requests(self) -> int:
+        with self._lock:
+            return self._queued_requests
+
+    def execute(self, tool: Any, kwargs: dict, timeout_sec: float) -> Dict[str, Any]:
+        with self._lock:
+            if self._queued_requests >= self.MAX_QUEUE_SIZE:
+                return {
+                    "success": False,
+                    "data": None,
+                    "error": (
+                        f"Process capacity exceeded: worker queue saturated "
+                        f"({self._queued_requests} queued, {self._active_workers} running). Execution rejected."
+                    )
+                }
+            self._queued_requests += 1
+
+        slot_acquired = False
+        try:
+            # Wait in queue for an available worker slot (bounded wait up to timeout_sec)
+            slot_acquired = self._semaphore.acquire(timeout=timeout_sec)
+            if not slot_acquired:
+                return {
+                    "success": False,
+                    "data": None,
+                    "error": f"Process queue wait timeout exceeded: all {self.MAX_WORKERS} worker slots occupied."
+                }
+
+            with self._lock:
+                self._queued_requests = max(0, self._queued_requests - 1)
+                self._active_workers += 1
+
+            return execute_with_process_isolation(
+                _standalone_tool_execute,
+                args=(tool, kwargs),
+                timeout_sec=timeout_sec
+            )
+        finally:
+            if slot_acquired:
+                with self._lock:
+                    self._active_workers = max(0, self._active_workers - 1)
+                self._semaphore.release()
+            else:
+                with self._lock:
+                    self._queued_requests = max(0, self._queued_requests - 1)
+
+
 class BaseTool(ABC):
     """
     Abstract base tool class.
     Executes operations under hard, non-blocking timeout guarantees,
-    worker capacity limits, and cooperative cancellation tokens.
+    worker capacity limits, cooperative cancellation tokens, and a true process pool.
     """
 
     MAX_CONCURRENT_WORKERS = 8
     MAX_PENDING_QUEUE = 16
-    MAX_CONCURRENT_PROCESSES = 4
-    MAX_PENDING_PROCESS_QUEUE = 8
 
     _shared_executor: Optional[concurrent.futures.ThreadPoolExecutor] = None
+    _process_pool: Optional[IsolatedProcessPool] = None
     _active_tasks: int = 0
-    _active_processes: int = 0
     _lock = threading.Lock()
 
     @classmethod
     def _get_executor(cls) -> concurrent.futures.ThreadPoolExecutor:
-        if cls._shared_executor is None:
-            cls._shared_executor = concurrent.futures.ThreadPoolExecutor(
-                max_workers=cls.MAX_CONCURRENT_WORKERS,
-                thread_name_prefix="rag_tool_worker"
-            )
-        return cls._shared_executor
+        with BaseTool._lock:
+            if BaseTool._shared_executor is None:
+                BaseTool._shared_executor = concurrent.futures.ThreadPoolExecutor(
+                    max_workers=BaseTool.MAX_CONCURRENT_WORKERS,
+                    thread_name_prefix="rag_tool_worker"
+                )
+            return BaseTool._shared_executor
+
+    @classmethod
+    def _get_process_pool(cls) -> IsolatedProcessPool:
+        with BaseTool._lock:
+            if BaseTool._process_pool is None:
+                BaseTool._process_pool = IsolatedProcessPool()
+            return BaseTool._process_pool
 
     def __init__(
         self,
@@ -117,8 +190,8 @@ class BaseTool(ABC):
 
     def run_isolated(self, **kwargs) -> Dict[str, Any]:
         """
-        Executes the tool inside an isolated OS process with hard process termination on timeout
-        and strictly bounded process concurrency limits.
+        Executes the tool inside a bounded 4-worker process pool with an 8-request queue
+        and hard process termination on timeout.
         """
         start_time = time.time()
         record = ToolCallRecord(
@@ -126,44 +199,21 @@ class BaseTool(ABC):
             query_input=str(kwargs.get("query", kwargs.get("subqueries", "")))[:200]
         )
 
-        # Enforce strict process capacity limit
-        with self._lock:
-            if self._active_processes >= (self.MAX_CONCURRENT_PROCESSES + self.MAX_PENDING_PROCESS_QUEUE):
-                record.execution_time_ms = 0.0
-                record.success = False
-                record.error_message = (
-                    f"Process capacity exceeded: worker process pool saturated "
-                    f"({self._active_processes} active/queued). Execution rejected."
-                )
-                return {
-                    "success": False,
-                    "data": [],
-                    "record": record,
-                    "error": record.error_message
-                }
-            BaseTool._active_processes += 1
+        pool = self._get_process_pool()
+        res = pool.execute(self, kwargs, timeout_sec=self.timeout_sec)
+        elapsed_ms = (time.time() - start_time) * 1000.0
+        record.execution_time_ms = round(elapsed_ms, 2)
 
-        try:
-            res = execute_with_process_isolation(
-                _standalone_tool_execute,
-                args=(self, kwargs),
-                timeout_sec=self.timeout_sec
-            )
-            elapsed_ms = (time.time() - start_time) * 1000.0
-            record.execution_time_ms = round(elapsed_ms, 2)
-            if res.get("success"):
-                data = res.get("data", [])
-                record.success = True
-                record.results_count = len(data)
-                return {"success": True, "data": data, "record": record}
-            else:
-                record.success = False
-                record.error_message = res.get("error", f"Tool hard timed out or failed in isolated process after {self.timeout_sec}s.")
-                record.results_count = 0
-                return {"success": False, "data": [], "record": record, "error": record.error_message}
-        finally:
-            with self._lock:
-                BaseTool._active_processes = max(0, BaseTool._active_processes - 1)
+        if res.get("success"):
+            data = res.get("data", [])
+            record.success = True
+            record.results_count = len(data)
+            return {"success": True, "data": data, "record": record}
+        else:
+            record.success = False
+            record.error_message = res.get("error", f"Tool hard timed out or failed in isolated process after {self.timeout_sec}s.")
+            record.results_count = 0
+            return {"success": False, "data": [], "record": record, "error": record.error_message}
 
     def run(self, isolate_process: Optional[bool] = None, **kwargs) -> Dict[str, Any]:
         """
