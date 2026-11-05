@@ -48,7 +48,7 @@ class HealthResponse(BaseModel):
 class UserRegisterRequest(BaseModel):
     username: str = Field(..., min_length=3, max_length=64, description="Unique username")
     password: str = Field(..., min_length=6, max_length=128, description="User password")
-    tenant_id: Optional[str] = Field(None, description="Optional organization or workspace tenant ID")
+    invitation_code: Optional[str] = Field(None, description="Optional organization invitation code to join an existing tenant")
 
 
 class UserLoginRequest(BaseModel):
@@ -61,6 +61,23 @@ class AuthTokenResponse(BaseModel):
     user_id: str
     tenant_id: str
     role: str
+    must_change_password: bool = False
     expires_in: int
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str = Field(..., description="Current account password")
+    new_password: str = Field(..., min_length=8, max_length=128, description="New strong password")
+
+
+class CreateInvitationRequest(BaseModel):
+    role: str = Field("user", description="Assigned role for joining member ('user' or 'admin')")
+
+
+class InvitationResponse(BaseModel):
+    invite_code: str
+    tenant_id: str
+    role: str
+
 
 

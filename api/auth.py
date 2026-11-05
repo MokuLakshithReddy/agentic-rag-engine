@@ -1,17 +1,25 @@
 """
-Authentication and User Identity Management.
-Provides secure password hashing (PBKDF2-HMAC-SHA256 with cryptographic salting),
-user registration, user login, tenant identity resolution, and ephemeral guest sandboxing.
+Authentication and User Identity Management with Multi-Tenant Governance.
+Enforces:
+1. Secure password hashing using PBKDF2-HMAC-SHA256 with per-user cryptographic salt.
+2. Safe administrator provisioning: Never uses hardcoded default passwords.
+   Generates a one-time high-entropy bootstrap secret and mandates immediate replacement.
+3. Server-controlled tenant allocation: Users cannot register arbitrary tenant IDs.
+   New tenants are assigned unguessable server IDs; joining existing tenants requires verified invitations.
+4. Ephemeral guest sandboxing with isolated tenant partitions.
 """
 
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 import os
 import time
 import json
+import logging
 import secrets
 import hashlib
 from pathlib import Path
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+logger = logging.getLogger("agentic_rag.auth")
 
 
 class UserRecord(BaseModel):
@@ -21,7 +29,16 @@ class UserRecord(BaseModel):
     salt: str
     tenant_id: str
     role: str = "user"  # "admin", "user", "guest"
-    created_at: float
+    must_change_password: bool = False
+    created_at: float = Field(default_factory=time.time)
+
+
+class TenantRecord(BaseModel):
+    tenant_id: str
+    owner_id: str
+    name: str
+    created_at: float = Field(default_factory=time.time)
+    invitation_codes: Dict[str, str] = Field(default_factory=dict)  # code -> role
 
 
 class AuthContext(BaseModel):
@@ -30,21 +47,31 @@ class AuthContext(BaseModel):
     tenant_id: str
     role: str
     auth_type: str  # "api_key", "session", "guest"
+    must_change_password: bool = False
 
 
 class UserAuthManager:
     """
-    Manages user registration, credential verification, and tenant-bound session tokens.
-    Persists registered user accounts to disk under data/users.json.
+    Manages user registration, credential verification, tenant authorizations,
+    and tenant-bound session tokens.
+    Persists registered accounts to data/users.json and tenant records to data/tenants_registry.json.
     """
 
-    def __init__(self, storage_path: str = "./data/users.json"):
+    def __init__(self, storage_path: str = "./data/users.json", tenants_path: Optional[str] = None):
         self.storage_path = Path(storage_path).resolve()
         self.storage_path.parent.mkdir(parents=True, exist_ok=True)
+        if tenants_path:
+            self.tenants_path = Path(tenants_path).resolve()
+            self.tenants_path.parent.mkdir(parents=True, exist_ok=True)
+        else:
+            self.tenants_path = self.storage_path.parent / "tenants_registry.json"
+
         self.users: Dict[str, UserRecord] = {}
+        self.tenants: Dict[str, TenantRecord] = {}
         self.active_sessions: Dict[str, Dict[str, Any]] = {}
         self.session_ttl_sec = 3600  # 1 hour
-        self._load_users()
+
+        self._load_data()
         self._seed_default_admin()
 
     def _hash_password(self, password: str, salt: str) -> str:
@@ -55,7 +82,7 @@ class UserAuthManager:
             100_000
         ).hex()
 
-    def _load_users(self) -> None:
+    def _load_data(self) -> None:
         if self.storage_path.exists():
             try:
                 with open(self.storage_path, "r", encoding="utf-8") as f:
@@ -63,21 +90,72 @@ class UserAuthManager:
                     for u in data:
                         rec = UserRecord.model_validate(u)
                         self.users[rec.username.lower()] = rec
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"Failed to load users from {self.storage_path}: {e}")
 
-    def _save_users(self) -> None:
+        if self.tenants_path.exists():
+            try:
+                with open(self.tenants_path, "r", encoding="utf-8") as f:
+                    tdata = json.load(f)
+                    for t in tdata:
+                        trec = TenantRecord.model_validate(t)
+                        self.tenants[trec.tenant_id] = trec
+            except Exception as e:
+                logger.warning(f"Failed to load tenants from {self.tenants_path}: {e}")
+
+    def _save_data(self) -> None:
         try:
             with open(self.storage_path, "w", encoding="utf-8") as f:
                 json.dump([u.model_dump() for u in self.users.values()], f, indent=2)
-        except Exception:
-            pass
+            with open(self.tenants_path, "w", encoding="utf-8") as f:
+                json.dump([t.model_dump() for t in self.tenants.values()], f, indent=2)
+        except Exception as e:
+            logger.error(f"Failed to persist authentication data: {e}")
 
     def _seed_default_admin(self) -> None:
-        """Seeds default admin if not already registered."""
+        """
+        Securely provisions the administrator account.
+        NEVER seeds a hardcoded default password.
+        Requires ADMIN_PASSWORD from environment, or generates a one-time high-entropy
+        bootstrap secret saved to data/.bootstrap_admin_secret with mandatory password change flag.
+        """
+        # Ensure default tenant exists
+        if "default" not in self.tenants:
+            self.tenants["default"] = TenantRecord(
+                tenant_id="default",
+                owner_id="user_admin_001",
+                name="Default System Organization"
+            )
+
         if "admin" not in self.users:
             salt = secrets.token_hex(16)
-            admin_pass = os.getenv("ADMIN_PASSWORD", "admin_rag_2026")
+            admin_env = os.getenv("ADMIN_PASSWORD")
+            bootstrap_file = self.storage_path.parent / ".bootstrap_admin_secret"
+
+            if admin_env and len(admin_env.strip()) >= 12:
+                admin_pass = admin_env.strip()
+                must_change = False
+                logger.info("Admin account seeded with securely configured environment password.")
+            else:
+                if bootstrap_file.exists():
+                    try:
+                        admin_pass = bootstrap_file.read_text(encoding="utf-8").strip()
+                    except Exception:
+                        admin_pass = secrets.token_urlsafe(24)
+                else:
+                    admin_pass = secrets.token_urlsafe(24)
+                    try:
+                        bootstrap_file.write_text(admin_pass, encoding="utf-8")
+                    except Exception as e:
+                        logger.error(f"Failed to write bootstrap admin secret: {e}")
+
+                must_change = True
+                logger.warning(
+                    "SECURITY NOTICE: ADMIN_PASSWORD environment variable not set. "
+                    "Generated one-time random bootstrap administrator secret in data/.bootstrap_admin_secret. "
+                    "Password replacement is strictly mandated upon first login."
+                )
+
             admin_user = UserRecord(
                 user_id="user_admin_001",
                 username="admin",
@@ -85,37 +163,77 @@ class UserAuthManager:
                 salt=salt,
                 tenant_id="default",
                 role="admin",
-                created_at=time.time()
+                must_change_password=must_change
             )
             self.users["admin"] = admin_user
-            self._save_users()
+            self._save_data()
 
     def register_user(
         self,
         username: str,
         password: str,
-        tenant_id: Optional[str] = None,
+        invitation_code: Optional[str] = None,
         role: str = "user"
     ) -> UserRecord:
+        """
+        Registers a new user account.
+        Strictly forbids user-supplied tenant IDs to eliminate tenant hijacking and traversal.
+        If invitation_code is provided, validates and attaches user to the target organization.
+        Otherwise, assigns a new, unguessable server-generated tenant ID.
+        """
         uname = username.strip().lower()
+        if not uname or len(uname) < 3:
+            raise ValueError("Username must be at least 3 characters.")
         if uname in self.users:
             raise ValueError(f"Username '{username}' is already registered.")
 
+        if not password or len(password) < 6:
+            raise ValueError("Password must be at least 6 characters.")
+
+        # Resolve tenant assignment
+        if invitation_code and invitation_code.strip():
+            code = invitation_code.strip()
+            target_tenant = None
+            assigned_role = role
+
+            for t in self.tenants.values():
+                if code in t.invitation_codes:
+                    target_tenant = t
+                    assigned_role = t.invitation_codes.pop(code)
+                    break
+
+            if not target_tenant:
+                raise ValueError("Invalid or expired organization invitation code.")
+
+            assigned_tenant_id = target_tenant.tenant_id
+        else:
+            # Server-generated, cryptographically unique tenant ID
+            assigned_tenant_id = f"tenant_{secrets.token_hex(6)}"
+            new_tenant = TenantRecord(
+                tenant_id=assigned_tenant_id,
+                owner_id="",  # Bound below once user_id generated
+                name=f"{username}'s Organization"
+            )
+            self.tenants[assigned_tenant_id] = new_tenant
+
         salt = secrets.token_hex(16)
         pw_hash = self._hash_password(password, salt)
-        assigned_tenant = tenant_id.strip() if tenant_id and tenant_id.strip() else f"tenant_{secrets.token_hex(4)}"
+        user_id = f"usr_{secrets.token_hex(8)}"
+
+        if assigned_tenant_id in self.tenants and not self.tenants[assigned_tenant_id].owner_id:
+            self.tenants[assigned_tenant_id].owner_id = user_id
 
         user = UserRecord(
-            user_id=f"usr_{secrets.token_hex(8)}",
+            user_id=user_id,
             username=username.strip(),
             password_hash=pw_hash,
             salt=salt,
-            tenant_id=assigned_tenant,
+            tenant_id=assigned_tenant_id,
             role=role,
-            created_at=time.time()
+            must_change_password=False
         )
         self.users[uname] = user
-        self._save_users()
+        self._save_data()
         return user
 
     def authenticate_user(self, username: str, password: str) -> Optional[UserRecord]:
@@ -128,6 +246,41 @@ class UserAuthManager:
         if secrets.compare_digest(test_hash, user.password_hash):
             return user
         return None
+
+    def change_password(self, user_id: str, current_password: str, new_password: str) -> bool:
+        """Changes user password and clears must_change_password requirement."""
+        user = next((u for u in self.users.values() if u.user_id == user_id), None)
+        if not user:
+            return False
+
+        test_hash = self._hash_password(current_password, user.salt)
+        if not secrets.compare_digest(test_hash, user.password_hash):
+            raise ValueError("Current password verification failed.")
+
+        if not new_password or len(new_password) < 8:
+            raise ValueError("New password must be at least 8 characters.")
+
+        user.salt = secrets.token_hex(16)
+        user.password_hash = self._hash_password(new_password, user.salt)
+        user.must_change_password = False
+        self._save_data()
+        return True
+
+    def create_invitation(self, tenant_id: str, creator_user_id: str, role: str = "user") -> str:
+        """Issues an organization membership invitation code."""
+        tenant = self.tenants.get(tenant_id)
+        if not tenant:
+            raise ValueError(f"Tenant '{tenant_id}' not found.")
+
+        # Verify creator is owner or admin
+        creator = next((u for u in self.users.values() if u.user_id == creator_user_id), None)
+        if not creator or (creator.role != "admin" and tenant.owner_id != creator_user_id):
+            raise PermissionError("Only tenant owners or system administrators can issue invitations.")
+
+        code = f"inv_{secrets.token_urlsafe(16)}"
+        tenant.invitation_codes[code] = role
+        self._save_data()
+        return code
 
     def clean_expired_sessions(self) -> None:
         now = time.time()
@@ -145,6 +298,7 @@ class UserAuthManager:
             "username": user.username,
             "tenant_id": user.tenant_id,
             "role": user.role,
+            "must_change_password": user.must_change_password,
             "expires_at": expires_at
         }
         self.active_sessions[token] = session_info
@@ -153,6 +307,7 @@ class UserAuthManager:
             "user_id": user.user_id,
             "tenant_id": user.tenant_id,
             "role": user.role,
+            "must_change_password": user.must_change_password,
             "expires_in": self.session_ttl_sec
         }
 
@@ -168,6 +323,7 @@ class UserAuthManager:
             "username": f"Guest ({guest_id})",
             "tenant_id": guest_id,
             "role": "guest",
+            "must_change_password": False,
             "expires_at": expires_at
         }
         self.active_sessions[token] = session_info
@@ -176,6 +332,7 @@ class UserAuthManager:
             "user_id": guest_id,
             "tenant_id": guest_id,
             "role": "guest",
+            "must_change_password": False,
             "mode": "isolated_guest_sandbox",
             "expires_in": self.session_ttl_sec
         }

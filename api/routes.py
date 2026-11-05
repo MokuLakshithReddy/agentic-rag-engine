@@ -29,7 +29,10 @@ from api.schemas import (
     HealthResponse,
     UserRegisterRequest,
     UserLoginRequest,
-    AuthTokenResponse
+    AuthTokenResponse,
+    ChangePasswordRequest,
+    CreateInvitationRequest,
+    InvitationResponse
 )
 from api.auth import UserAuthManager, AuthContext
 from api.tenant_manager import TenantKnowledgeBaseManager
@@ -96,20 +99,33 @@ def verify_api_key(
                 username="admin",
                 tenant_id=tenant_header if tenant_header else "default",
                 role="admin",
-                auth_type="api_key"
+                auth_type="api_key",
+                must_change_password=False
             )
 
     # 2. Browser / Client session authentication
     if session_token:
         sess = auth_manager.validate_session(session_token.strip())
         if sess:
-            return AuthContext(
+            auth_ctx = AuthContext(
                 user_id=sess["user_id"],
                 username=sess["username"],
                 tenant_id=sess["tenant_id"],
                 role=sess["role"],
-                auth_type=sess.get("role", "session")
+                auth_type=sess.get("role", "session"),
+                must_change_password=sess.get("must_change_password", False)
             )
+
+            # Enforce password replacement before accessing protected endpoints
+            if auth_ctx.must_change_password:
+                allowed_paths = {"/v1/auth/change-password", "/v1/auth/me"}
+                if request.url.path not in allowed_paths:
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="Password replacement required: Initial bootstrap administrator secret must be updated via /v1/auth/change-password before accessing system."
+                    )
+
+            return auth_ctx
 
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -135,23 +151,24 @@ def sanitize_request_id(req_id: Optional[str]) -> str:
 def register_user(req: UserRegisterRequest, request: Request):
     """
     Registers a new user account with isolated tenant knowledge base storage.
-    Passwords are cryptographically salted and hashed using PBKDF2-HMAC-SHA256.
+    Strictly forbids user-supplied tenant IDs to eliminate tenant hijacking and traversal.
     """
     check_rate_limit(request)
     try:
         user = auth_manager.register_user(
             username=req.username,
             password=req.password,
-            tenant_id=req.tenant_id
+            invitation_code=req.invitation_code
         )
         sess = auth_manager.create_session(user)
-        # Pre-seed tenant knowledge base
+        # Pre-seed tenant knowledge base safely
         tenant_manager.get_kb(user.tenant_id)
         return AuthTokenResponse(
             session_token=sess["session_token"],
             user_id=sess["user_id"],
             tenant_id=sess["tenant_id"],
             role=sess["role"],
+            must_change_password=sess["must_change_password"],
             expires_in=sess["expires_in"]
         )
     except ValueError as e:
@@ -165,6 +182,7 @@ def register_user(req: UserRegisterRequest, request: Request):
 def login_user(req: UserLoginRequest, request: Request):
     """
     Authenticates registered user and issues a tenant-bound session token.
+    Flags whether mandatory password replacement is required.
     """
     check_rate_limit(request)
     user = auth_manager.authenticate_user(username=req.username, password=req.password)
@@ -180,8 +198,55 @@ def login_user(req: UserLoginRequest, request: Request):
         user_id=sess["user_id"],
         tenant_id=sess["tenant_id"],
         role=sess["role"],
+        must_change_password=sess["must_change_password"],
         expires_in=sess["expires_in"]
     )
+
+
+@router.post("/v1/auth/change-password", response_model=Dict[str, Any])
+def change_password(
+    req: ChangePasswordRequest,
+    request: Request,
+    auth: AuthContext = Security(verify_api_key)
+):
+    """Changes user password and clears initial bootstrap password lock."""
+    check_rate_limit(request)
+    try:
+        success = auth_manager.change_password(
+            user_id=auth.user_id,
+            current_password=req.current_password,
+            new_password=req.new_password
+        )
+        if not success:
+            raise HTTPException(status_code=400, detail="Password change failed.")
+        return {"success": True, "message": "Password changed successfully. Bootstrap lock cleared."}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/v1/tenants/invites", response_model=InvitationResponse)
+def create_tenant_invitation(
+    req: CreateInvitationRequest,
+    request: Request,
+    auth: AuthContext = Security(verify_api_key)
+):
+    """Issues an invitation code allowing an authorized user to join the tenant organization."""
+    check_rate_limit(request)
+    try:
+        code = auth_manager.create_invitation(
+            tenant_id=auth.tenant_id,
+            creator_user_id=auth.user_id,
+            role=req.role
+        )
+        return InvitationResponse(
+            invite_code=code,
+            tenant_id=auth.tenant_id,
+            role=req.role
+        )
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.post("/v1/auth/session", response_model=Dict[str, Any])
@@ -193,7 +258,6 @@ def create_guest_sandbox_session(request: Request):
     """
     check_rate_limit(request)
     sess = auth_manager.create_guest_sandbox_session()
-    # Initialize tenant partition
     tenant_manager.get_kb(sess["tenant_id"])
     return sess
 
@@ -333,7 +397,7 @@ def execute_agent_query(
         tenant_trace_dir = (TRACE_DIR / auth.tenant_id).resolve()
         tenant_trace_dir.mkdir(parents=True, exist_ok=True)
         trace_path = (tenant_trace_dir / f"{state.request_id}.json").resolve()
-        if trace_path.parent == tenant_trace_dir:
+        if trace_path.is_relative_to(tenant_trace_dir):
             with open(trace_path, "w", encoding="utf-8") as f:
                 json.dump(trace_payload, f)
 
@@ -377,7 +441,7 @@ def get_agent_trace(
     tenant_trace_dir = (TRACE_DIR / auth.tenant_id).resolve()
     trace_file = (tenant_trace_dir / f"{request_id}.json").resolve()
 
-    if trace_file.parent != tenant_trace_dir or not trace_file.exists():
+    if not trace_file.is_relative_to(tenant_trace_dir) or not trace_file.exists():
         # If admin, allow searching default directory as fallback
         if auth.role == "admin":
             default_trace = (TRACE_DIR / "default" / f"{request_id}.json").resolve()

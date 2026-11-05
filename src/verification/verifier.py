@@ -7,11 +7,14 @@ and validates factual alignment using LLM and calibrated deterministic safeguard
 
 from typing import Tuple, List, Dict, Any, Set, Optional
 import re
+import logging
 from pydantic import BaseModel
 from src.state.state import AgentState, ResponseStatus, EvidenceChunk
 from src.verification.citation_checker import CitationChecker
 from src.llm.base import BaseLLMClient, LLMMessage
-from src.llm.client import get_llm_client
+from src.llm.client import get_llm_client, DeterministicReasoningLLMClient
+
+logger = logging.getLogger("agentic_rag.verifier")
 
 
 class EntailmentResult(BaseModel):
@@ -25,6 +28,7 @@ class AnswerVerifier:
     """
     Validates factual claims against cited evidence passages.
     Prevents polarity inversions, hallucinated citations, and contradictory assertions.
+    Provides explicit verification strategy tracking and neural NLI / LLM observability.
     """
 
     DIRECT_NEGATIONS = {
@@ -36,11 +40,13 @@ class AnswerVerifier:
         self,
         llm_client: Optional[BaseLLMClient] = None,
         min_confidence_threshold: float = 0.60,
-        min_claim_support_ratio: float = 0.45
+        min_claim_support_ratio: float = 0.45,
+        verification_strategy: str = "auto"
     ):
         self.llm = llm_client or get_llm_client()
         self.min_confidence_threshold = min_confidence_threshold
         self.min_claim_support_ratio = min_claim_support_ratio
+        self.verification_strategy = verification_strategy
         self.checker = CitationChecker()
 
     def _split_into_claims(self, text: str) -> List[Tuple[str, Optional[str]]]:
@@ -106,22 +112,44 @@ class AnswerVerifier:
 
         return False
 
+    def _lexical_support(
+        self,
+        claim_clean: str,
+        chunk_text: str,
+        cited_id: str
+    ) -> Tuple[bool, str, float, bool]:
+        """Deterministic lexical overlap assessment fallback."""
+        stopwords = {
+            "the", "a", "an", "is", "are", "was", "were", "and", "or", "to", "in",
+            "of", "for", "with", "that", "this", "by", "from", "on", "it", "its"
+        }
+        claim_words = [w.lower() for w in re.findall(r"\b\w+\b", claim_clean) if len(w) > 2 and w.lower() not in stopwords]
+        if not claim_words:
+            return True, cited_id, 1.0, False
+
+        chunk_lower = chunk_text.lower()
+        supported_words = sum(1 for w in claim_words if w in chunk_lower)
+        support_ratio = supported_words / len(claim_words)
+
+        is_supported = support_ratio >= self.min_claim_support_ratio
+        return is_supported, cited_id, round(support_ratio, 3), False
+
     def verify_claim_grounding(
         self,
         claim: str,
         cited_id: Optional[str],
         evidence_map: Dict[str, EvidenceChunk]
-    ) -> Tuple[bool, Optional[str], float, bool]:
+    ) -> Tuple[bool, Optional[str], float, bool, str]:
         """
         Verifies if a specific claim is factually entailed by its cited evidence chunk
-        using genuine LLM-driven Natural Language Inference (NLI) and contradiction guards.
-        Returns: (is_grounded, cited_chunk_id, support_score, is_contradiction)
+        using genuine NLI/LLM reasoning, contradiction detection, and calibrated deterministic safeguards.
+        Returns: (is_grounded, cited_chunk_id, support_score, is_contradiction, model_used)
         """
         if not cited_id:
-            return False, None, 0.0, False
+            return False, None, 0.0, False, "none"
 
         if cited_id not in evidence_map:
-            return False, cited_id, 0.0, False
+            return False, cited_id, 0.0, False, "none"
 
         chunk = evidence_map[cited_id]
         chunk_text = chunk.content
@@ -129,9 +157,36 @@ class AnswerVerifier:
 
         # 1. Deterministic polarity contradiction guard
         if self._has_polarity_contradiction(claim_clean, chunk_text):
-            return False, cited_id, 0.0, True
+            return False, cited_id, 0.0, True, "polarity_contradiction_guard"
 
-        # 2. Genuine LLM-driven Semantic Entailment & Contradiction Verification
+        # 2. Strict Deterministic strategy if requested
+        if self.verification_strategy == "deterministic":
+            is_supp, cid, score, is_contra = self._lexical_support(claim_clean, chunk_text, cited_id)
+            return is_supp, cid, score, is_contra, "deterministic_lexical_fallback"
+
+        # 3. Neural NLI Cross-Encoder (Preferred offline & when strategy is neural_nli or auto with offline LLM)
+        use_neural_first = (
+            self.verification_strategy == "neural_nli" or
+            (self.verification_strategy == "auto" and isinstance(self.llm, DeterministicReasoningLLMClient))
+        )
+
+        if use_neural_first:
+            from src.verification.neural_nli import NeuralNLIClassifier
+            clf = NeuralNLIClassifier.get_instance()
+            if clf._is_ready and clf.model is not None:
+                nli_res = clf.classify(chunk_text, claim_clean)
+                model_name = clf.model_name
+                if nli_res["contradiction"]:
+                    return False, cited_id, 0.0, True, model_name
+                if not nli_res["is_entailed"]:
+                    return False, cited_id, round(nli_res["confidence"], 3), False, model_name
+                return True, cited_id, round(nli_res["confidence"], 3), False, model_name
+            else:
+                # Local weights unavailable -> calibrated fallback
+                is_supp, cid, score, is_contra = self._lexical_support(claim_clean, chunk_text, cited_id)
+                return is_supp, cid, score, is_contra, "deterministic_lexical_fallback"
+
+        # 4. External Cloud LLM structured evaluation (when strategy is 'llm' or 'auto' with real cloud client)
         try:
             nli_messages = [
                 LLMMessage(
@@ -152,41 +207,33 @@ class AnswerVerifier:
                 )
             ]
             entailment: EntailmentResult = self.llm.generate_structured(nli_messages, EntailmentResult)
+            model_name = getattr(self.llm, "model_name", "cloud_llm")
             if entailment.contradiction:
-                return False, cited_id, 0.0, True
+                return False, cited_id, 0.0, True, model_name
             if not entailment.is_entailed:
-                return False, cited_id, round(entailment.confidence, 3), False
-            return True, cited_id, round(entailment.confidence, 3), False
-        except Exception:
-            pass
+                return False, cited_id, round(entailment.confidence, 3), False, model_name
+            return True, cited_id, round(entailment.confidence, 3), False, model_name
+        except Exception as e:
+            logger.warning(f"LLM entailment evaluation failed: {e}. Falling back to Neural NLI / Heuristic.")
 
-        # 3. Local Neural NLI Cross-Encoder Fallback
+        # 5. Neural NLI Cross-Encoder Fallback
         try:
             from src.verification.neural_nli import NeuralNLIClassifier
-            nli_res = NeuralNLIClassifier.get_instance().classify(chunk_text, claim_clean)
-            if nli_res["contradiction"]:
-                return False, cited_id, 0.0, True
-            if not nli_res["is_entailed"]:
-                return False, cited_id, round(nli_res["confidence"], 3), False
-            return True, cited_id, round(nli_res["confidence"], 3), False
+            clf = NeuralNLIClassifier.get_instance()
+            if clf._is_ready and clf.model is not None:
+                nli_res = clf.classify(chunk_text, claim_clean)
+                model_name = clf.model_name
+                if nli_res["contradiction"]:
+                    return False, cited_id, 0.0, True, model_name
+                if not nli_res["is_entailed"]:
+                    return False, cited_id, round(nli_res["confidence"], 3), False, model_name
+                return True, cited_id, round(nli_res["confidence"], 3), False, model_name
         except Exception:
             pass
 
-        # 4. Deterministic lexical fallback if all neural models are unavailable
-        stopwords = {
-            "the", "a", "an", "is", "are", "was", "were", "and", "or", "to", "in",
-            "of", "for", "with", "that", "this", "by", "from", "on", "it", "its"
-        }
-        claim_words = [w.lower() for w in re.findall(r"\b\w+\b", claim_clean) if len(w) > 2 and w.lower() not in stopwords]
-        if not claim_words:
-            return True, cited_id, 1.0, False
-
-        chunk_lower = chunk_text.lower()
-        supported_words = sum(1 for w in claim_words if w in chunk_lower)
-        support_ratio = supported_words / len(claim_words)
-
-        is_supported = support_ratio >= self.min_claim_support_ratio
-        return is_supported, cited_id, round(support_ratio, 3), False
+        # 6. Final Deterministic lexical fallback
+        is_supp, cid, score, is_contra = self._lexical_support(claim_clean, chunk_text, cited_id)
+        return is_supp, cid, score, is_contra, "deterministic_lexical_fallback"
 
     def verify(self, state: AgentState) -> Tuple[str, float, ResponseStatus]:
         """
@@ -226,9 +273,11 @@ class AnswerVerifier:
         supported_count = 0
         unsupported_claims: List[str] = []
         has_critical_contradiction = False
+        models_used: List[str] = []
 
         for claim, cited_id in claims_with_cites:
-            is_supported, cid, score, is_contradiction = self.verify_claim_grounding(claim, cited_id, evidence_map)
+            is_supported, cid, score, is_contradiction, model_used = self.verify_claim_grounding(claim, cited_id, evidence_map)
+            models_used.append(model_used)
             if is_contradiction:
                 has_critical_contradiction = True
                 unsupported_claims.append(f"Direct contradiction detected in claim: '{claim[:80]}' against chunk {cid}")
@@ -247,6 +296,22 @@ class AnswerVerifier:
 
         confidence = (0.50 * grounding_ratio) + (0.30 * state.evidence_relevance_score) + (0.20 * cit_precision)
         confidence = round(min(1.0, max(0.0, confidence)), 4)
+
+        primary_model = max(set(models_used), key=models_used.count) if models_used else "none"
+        state.verification_metadata = {
+            "strategy": self.verification_strategy,
+            "model_used": primary_model,
+            "models_used": list(set(models_used)),
+            "claims_evaluated": len(claims_with_cites),
+            "grounding_ratio": round(grounding_ratio, 4),
+            "contradiction_detected": has_critical_contradiction
+        }
+        logger.info(f"Verification completed using model '{primary_model}' (strategy: {self.verification_strategy}, grounding: {grounding_ratio:.2f})")
+        state.add_trace(
+            "VERIFICATION_METADATA",
+            f"Verification executed via '{primary_model}' ({self.verification_strategy}). Grounding: {grounding_ratio:.2f}",
+            {"verification_metadata": state.verification_metadata}
+        )
 
         if has_critical_contradiction or grounding_ratio < 0.40 or confidence < self.min_confidence_threshold or len(invalid_cites) > 0:
             return (

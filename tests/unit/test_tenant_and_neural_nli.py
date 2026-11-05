@@ -1,24 +1,34 @@
 """
 Unit and integration tests for Multi-Tenant Isolation, User Authentication,
-Process-Isolated Tool Execution, and Neural NLI Entailment.
+Bootstrap Admin Security, Path Traversal Guards, Process-Isolated Execution,
+and Neural NLI Explicit Logging and Verification.
 """
 
+import os
+import time
 import pytest
+from pathlib import Path
 from api.auth import UserAuthManager
 from api.tenant_manager import TenantKnowledgeBaseManager
+from src.tools.base import BaseTool
 from src.tools.implementations import SparseRetrievalTool, DenseRetrievalTool
+from src.tools.registry import ToolRegistry
+from src.agents.workflow import AgenticRAGWorkflow
 from src.verification.neural_nli import NeuralNLIClassifier
+from src.verification.verifier import AnswerVerifier
+from src.state.state import AgentState, EvidenceChunk, ResponseStatus
 
 
-def test_user_registration_and_authentication(tmp_path):
+def test_user_registration_server_generated_tenants_and_auth(tmp_path):
     auth_file = tmp_path / "test_users.json"
-    mgr = UserAuthManager(storage_path=str(auth_file))
+    tenants_file = tmp_path / "test_tenants.json"
+    mgr = UserAuthManager(storage_path=str(auth_file), tenants_path=str(tenants_file))
 
-    # Register user
-    user = mgr.register_user("researcher_alice", "secure_pass_123", tenant_id="tenant_alice")
+    # Register user without arbitrary tenant_id -> server creates unguessable tenant_id
+    user = mgr.register_user("researcher_alice", "secure_pass_123")
     assert user.username == "researcher_alice"
-    assert user.tenant_id == "tenant_alice"
-    assert user.password_hash != "secure_pass_123"  # Salted hash
+    assert user.tenant_id.startswith("tenant_")
+    assert user.password_hash != "secure_pass_123"  # Salted PBKDF2 hash
 
     # Duplicate username should raise ValueError
     with pytest.raises(ValueError):
@@ -35,12 +45,86 @@ def test_user_registration_and_authentication(tmp_path):
     # Issue session
     sess = mgr.create_session(auth_user)
     assert "session_token" in sess
-    assert sess["tenant_id"] == "tenant_alice"
+    assert sess["tenant_id"] == user.tenant_id
 
     # Validate session
     val = mgr.validate_session(sess["session_token"])
     assert val is not None
     assert val["username"] == "researcher_alice"
+
+
+def test_tenant_invitation_code_membership(tmp_path):
+    auth_file = tmp_path / "test_users.json"
+    tenants_file = tmp_path / "test_tenants.json"
+    mgr = UserAuthManager(storage_path=str(auth_file), tenants_path=str(tenants_file))
+
+    # Alice creates an organization
+    alice = mgr.register_user("alice", "alice_pass_123")
+    alice_tenant = alice.tenant_id
+
+    # Alice creates an invitation code
+    code = mgr.create_invitation(tenant_id=alice_tenant, creator_user_id=alice.user_id, role="user")
+    assert code.startswith("inv_")
+
+    # Bob registers using the invitation code
+    bob = mgr.register_user("bob", "bob_pass_123", invitation_code=code)
+    assert bob.tenant_id == alice_tenant  # Joined Alice's organization
+
+    # Using the same invitation code again fails
+    with pytest.raises(ValueError, match="Invalid or expired"):
+        mgr.register_user("charlie", "charlie_pass_123", invitation_code=code)
+
+
+def test_admin_bootstrap_secret_and_password_replacement(tmp_path, monkeypatch):
+    # Ensure ADMIN_PASSWORD is unset so bootstrap flow triggers
+    monkeypatch.delenv("ADMIN_PASSWORD", raising=False)
+    auth_file = tmp_path / "data" / "users.json"
+    secret_file = tmp_path / "data" / ".bootstrap_admin_secret"
+
+    mgr = UserAuthManager(storage_path=str(auth_file))
+
+    # Secret file should have been generated
+    assert secret_file.exists()
+    bootstrap_secret = secret_file.read_text(encoding="utf-8").strip()
+    assert len(bootstrap_secret) >= 32
+
+    # Admin user should have must_change_password=True
+    admin_auth = mgr.authenticate_user("admin", bootstrap_secret)
+    assert admin_auth is not None
+    assert admin_auth.must_change_password is True
+
+    # Password change required
+    mgr.change_password(
+        user_id=admin_auth.user_id,
+        current_password=bootstrap_secret,
+        new_password="ReplacedAdminPassword2026!"
+    )
+
+    # Subsequent authentication with new password has must_change_password=False
+    updated_admin = mgr.authenticate_user("admin", "ReplacedAdminPassword2026!")
+    assert updated_admin is not None
+    assert updated_admin.must_change_password is False
+
+
+def test_tenant_path_traversal_guards(tmp_path):
+    tm = TenantKnowledgeBaseManager(base_data_dir=str(tmp_path))
+
+    # Valid tenant IDs pass
+    kb = tm.get_kb("tenant_valid_123")
+    assert kb is not None
+
+    # Path traversal attempts must raise ValueError
+    with pytest.raises(ValueError, match="Invalid tenant"):
+        tm.get_kb("../evil")
+
+    with pytest.raises(ValueError, match="Invalid tenant"):
+        tm.get_kb("tenant/../../etc")
+
+    with pytest.raises(ValueError, match="Invalid tenant"):
+        tm.get_kb("tenant..breakout")
+
+    with pytest.raises(ValueError, match="Invalid tenant"):
+        tm.get_kb("..\\windows\\breakout")
 
 
 def test_guest_sandbox_session(tmp_path):
@@ -81,6 +165,34 @@ def test_multi_tenant_knowledge_base_isolation(tmp_path):
     assert not any(h.doc_id == "doc_beta_exclusive" for h in alpha_hits)
 
 
+class HangingRetrievalTool(BaseTool):
+    """Mock retrieval tool simulating an uncooperative hanging worker."""
+    def __init__(self, timeout_sec: float = 0.5, process_isolated: bool = True):
+        super().__init__(
+            name="hanging_retrieval",
+            description="Simulates a hanging retrieval operation.",
+            timeout_sec=timeout_sec,
+            process_isolated=process_isolated
+        )
+
+    def _execute(self, **kwargs):
+        # Sleep far longer than timeout_sec
+        time.sleep(3.0)
+        return []
+
+
+def test_process_isolated_tool_hard_timeout_termination():
+    tool = HangingRetrievalTool(timeout_sec=0.5, process_isolated=True)
+    start_t = time.time()
+    res = tool.run(query="test_hang")
+    elapsed = time.time() - start_t
+
+    # Must complete within bounded time (well under 3.0s) and report timeout failure
+    assert elapsed < 2.0
+    assert res["success"] is False
+    assert "timeout" in res["error"].lower() or "hard-killed" in res["error"].lower()
+
+
 def test_neural_nli_entailment_and_contradiction():
     clf = NeuralNLIClassifier.get_instance()
     premise = "Raft uses randomized election timeouts between 150ms and 300ms to elect a cluster leader."
@@ -98,19 +210,50 @@ def test_neural_nli_entailment_and_contradiction():
     assert res_contra["is_entailed"] is False
 
 
-def test_process_isolated_tool_execution(tmp_path):
-    tm = TenantKnowledgeBaseManager(base_data_dir=str(tmp_path))
-    kb = tm.get_kb("tenant_test")
-    kb.index_document("doc_proc", "Process isolation guarantees clean termination of worker tasks.")
+def test_verifier_explicit_neural_nli_metadata_logging():
+    verifier = AnswerVerifier(verification_strategy="neural_nli")
+    evidence = EvidenceChunk(
+        chunk_id="raft_paper#chunk_raft_01",
+        doc_id="raft_paper",
+        content="Raft accomplishes consensus via an elected leader who manages log replication."
+    )
+    state = AgentState(
+        original_query="How does Raft manage log replication?",
+        retrieved_evidence=[evidence],
+        evidence_ids=["raft_paper#chunk_raft_01"],
+        evidence_relevance_score=0.95
+    )
+    state.synthesis_draft = "Raft accomplishes consensus through an elected leader managing log replication [raft_paper#chunk_raft_01]."
 
-    tool = SparseRetrievalTool(kb)
+    _, confidence, status = verifier.verify(state)
+    assert status == ResponseStatus.SUCCESS
+    assert confidence > 0.60
+    assert state.verification_metadata.get("strategy") == "neural_nli"
+    assert state.verification_metadata.get("model_used") == "cross-encoder/nli-deberta-v3-small"
+    assert state.verification_metadata.get("claims_evaluated") >= 1
 
-    # Normal execution
-    res_std = tool.run(query="guarantees")
-    assert res_std["success"] is True
 
-    # Process-isolated execution
-    res_iso = tool.run_isolated(query="guarantees")
-    assert res_iso["success"] is True
-    assert len(res_iso["data"]) > 0
-    assert res_iso["data"][0].doc_id == "doc_proc"
+def test_verifier_offline_deterministic_fallback_metadata_logging(monkeypatch):
+    clf = NeuralNLIClassifier.get_instance()
+    # Simulate neural model weights unavailable
+    monkeypatch.setattr(clf, "_is_ready", False)
+    monkeypatch.setattr(clf, "model", None)
+
+    verifier = AnswerVerifier(verification_strategy="neural_nli")
+    evidence = EvidenceChunk(
+        chunk_id="raft_paper#chunk_raft_01",
+        doc_id="raft_paper",
+        content="Raft accomplishes consensus via an elected leader who manages log replication."
+    )
+    state = AgentState(
+        original_query="How does Raft manage log replication?",
+        retrieved_evidence=[evidence],
+        evidence_ids=["raft_paper#chunk_raft_01"],
+        evidence_relevance_score=0.95
+    )
+    state.synthesis_draft = "Raft accomplishes consensus through an elected leader managing log replication [raft_paper#chunk_raft_01]."
+
+    _, confidence, status = verifier.verify(state)
+    assert status == ResponseStatus.SUCCESS
+    assert state.verification_metadata.get("strategy") == "neural_nli"
+    assert state.verification_metadata.get("model_used") == "deterministic_lexical_fallback"

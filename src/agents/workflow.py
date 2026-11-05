@@ -31,15 +31,22 @@ class AgenticRAGWorkflow:
     Executes a bounded, observable, multi-step research loop.
     """
 
-    def __init__(self, tool_registry: ToolRegistry):
+    def __init__(
+        self,
+        tool_registry: ToolRegistry,
+        process_isolated: Optional[bool] = None,
+        verification_strategy: str = "auto"
+    ):
         self.tool_registry = tool_registry
+        if process_isolated is not None:
+            self.tool_registry.set_process_isolation(process_isolated)
         self.analyzer = QueryAnalyzer()
         self.decomposer = QueryDecomposer()
         self.planner = RetrievalPlanner()
         self.reformulator = QueryReformulator(max_revisions=2)
         self.evaluator = EvidenceEvaluator()
         self.generator = AnswerGenerator()
-        self.verifier = AnswerVerifier()
+        self.verifier = AnswerVerifier(verification_strategy=verification_strategy)
         self.sanitizer = SecuritySanitizer()
         self.guardrails = SecurityGuardrails()
 

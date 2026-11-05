@@ -107,6 +107,7 @@ class AgentState(BaseModel):
     unsupported_claims: List[str] = Field(default_factory=list)
     confidence_score: float = 0.0
     response_status: ResponseStatus = ResponseStatus.SUCCESS
+    verification_metadata: Dict[str, Any] = Field(default_factory=dict)
     
     # Observability & Trace Telemetry
     trace: List[TraceStep] = Field(default_factory=list)

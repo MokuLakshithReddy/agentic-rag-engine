@@ -13,10 +13,12 @@ from src.ingestion.indexer import KnowledgeBase
 class DenseRetrievalTool(BaseTool):
     """Tool A: Dense Semantic Vector Search."""
 
-    def __init__(self, kb: KnowledgeBase):
+    def __init__(self, kb: KnowledgeBase, timeout_sec: float = 5.0, process_isolated: bool = False):
         super().__init__(
             name="dense_retrieval",
-            description="Semantic embeddings vector search. Best for conceptual and semantic similarity queries."
+            description="Semantic embeddings vector search. Best for conceptual and semantic similarity queries.",
+            timeout_sec=timeout_sec,
+            process_isolated=process_isolated
         )
         self.kb = kb
 
@@ -38,10 +40,12 @@ class DenseRetrievalTool(BaseTool):
 class SparseRetrievalTool(BaseTool):
     """Tool B: Sparse BM25 Keyword Search."""
 
-    def __init__(self, kb: KnowledgeBase):
+    def __init__(self, kb: KnowledgeBase, timeout_sec: float = 5.0, process_isolated: bool = False):
         super().__init__(
             name="sparse_retrieval",
-            description="BM25 keyword search. Best for exact token matches, acronyms, IDs, and technical jargon."
+            description="BM25 keyword search. Best for exact token matches, acronyms, IDs, and technical jargon.",
+            timeout_sec=timeout_sec,
+            process_isolated=process_isolated
         )
         self.kb = kb
 
@@ -63,10 +67,12 @@ class SparseRetrievalTool(BaseTool):
 class HybridRetrievalTool(BaseTool):
     """Tool C: Hybrid Dense + Sparse Search via Reciprocal Rank Fusion."""
 
-    def __init__(self, kb: KnowledgeBase):
+    def __init__(self, kb: KnowledgeBase, timeout_sec: float = 5.0, process_isolated: bool = False):
         super().__init__(
             name="hybrid_retrieval",
-            description="Fused semantic and keyword retrieval using Reciprocal Rank Fusion. Best overall default."
+            description="Fused semantic and keyword retrieval using Reciprocal Rank Fusion. Best overall default.",
+            timeout_sec=timeout_sec,
+            process_isolated=process_isolated
         )
         self.kb = kb
 
@@ -88,10 +94,12 @@ class HybridRetrievalTool(BaseTool):
 class MetadataSearchTool(BaseTool):
     """Tool D: Structured Faceted Metadata Filtering."""
 
-    def __init__(self, kb: KnowledgeBase):
+    def __init__(self, kb: KnowledgeBase, timeout_sec: float = 5.0, process_isolated: bool = False):
         super().__init__(
             name="metadata_search",
-            description="Faceted search filtering by doc_id, category, source file, or structured metadata attributes."
+            description="Faceted search filtering by doc_id, category, source file, or structured metadata attributes.",
+            timeout_sec=timeout_sec,
+            process_isolated=process_isolated
         )
         self.kb = kb
 
@@ -119,10 +127,12 @@ class MetadataSearchTool(BaseTool):
 class MultiQueryRetrievalTool(BaseTool):
     """Tool E: Multi-Query Subquery Fan-out & Fusion."""
 
-    def __init__(self, kb: KnowledgeBase):
+    def __init__(self, kb: KnowledgeBase, timeout_sec: float = 5.0, process_isolated: bool = False):
         super().__init__(
             name="multi_query_retrieval",
-            description="Executes a collection of targeted subqueries across the hybrid index and merges unique results."
+            description="Executes a collection of targeted subqueries across the hybrid index and merges unique results.",
+            timeout_sec=timeout_sec,
+            process_isolated=process_isolated
         )
         self.kb = kb
 
@@ -151,10 +161,17 @@ class MultiQueryRetrievalTool(BaseTool):
 class RerankEvidenceTool(BaseTool):
     """Tool F: Neural Cross-Encoder Candidate Evidence Reranking."""
 
-    def __init__(self, model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"):
+    def __init__(
+        self,
+        model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2",
+        timeout_sec: float = 5.0,
+        process_isolated: bool = False
+    ):
         super().__init__(
             name="rerank_evidence",
-            description="Re-scores candidate evidence chunks using neural cross-attention between query and passage."
+            description="Re-scores candidate evidence chunks using neural cross-attention between query and passage.",
+            timeout_sec=timeout_sec,
+            process_isolated=process_isolated
         )
         self.model_name = model_name
         self._cross_encoder = None
