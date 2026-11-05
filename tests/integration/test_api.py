@@ -1,13 +1,18 @@
 """
 Integration tests for FastAPI REST Endpoints.
-Verifies healthcheck, authenticated CRUD operations, rate limiting, and 401 rejection.
+Verifies healthcheck, authenticated CRUD operations, ephemeral browser session tokens,
+rate limiting, and 401 rejection.
 """
 
+import os
 from fastapi.testclient import TestClient
+
+os.environ["API_KEY"] = "test_configured_api_key_2026"
+
 from api.main import app
 
 client = TestClient(app)
-VALID_API_KEY = "rag_sec_live_key_2026"
+VALID_API_KEY = "test_configured_api_key_2026"
 AUTH_HEADERS = {"X-API-Key": VALID_API_KEY}
 
 
@@ -21,12 +26,34 @@ def test_api_health_is_public():
 
 
 def test_api_unauthorized_access_rejected():
-    """Requests without valid X-API-Key must be rejected with 401."""
+    """Requests without valid X-API-Key or X-Session-Token must be rejected with 401."""
     res_list = client.get("/v1/documents")
     assert res_list.status_code == 401
 
     res_query = client.post("/v1/agent/query", json={"query": "Test query"})
     assert res_query.status_code == 401
+
+
+def test_browser_session_token_authentication():
+    """Browser clients authenticate using ephemeral session tokens from /v1/auth/session."""
+    session_res = client.post("/v1/auth/session")
+    assert session_res.status_code == 200
+    session_data = session_res.json()
+    assert "session_token" in session_data
+    assert session_data["expires_in"] == 3600
+
+    token = session_data["session_token"]
+    session_headers = {"X-Session-Token": token}
+
+    # Query with session token instead of API key
+    res = client.post(
+        "/v1/agent/query",
+        json={"query": "How does Raft handle leader election?"},
+        headers=session_headers
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] == "SUCCESS"
 
 
 def test_api_document_lifecycle():

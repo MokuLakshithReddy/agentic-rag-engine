@@ -24,7 +24,8 @@ class DenseRetrievalTool(BaseTool):
         self,
         query: str,
         top_k: int = 5,
-        filter_metadata: Optional[Dict[str, Any]] = None
+        filter_metadata: Optional[Dict[str, Any]] = None,
+        **kwargs
     ) -> List[EvidenceChunk]:
         return self.kb.dense.search(query=query, top_k=top_k, filter_metadata=filter_metadata)
 
@@ -43,7 +44,8 @@ class SparseRetrievalTool(BaseTool):
         self,
         query: str,
         top_k: int = 5,
-        filter_metadata: Optional[Dict[str, Any]] = None
+        filter_metadata: Optional[Dict[str, Any]] = None,
+        **kwargs
     ) -> List[EvidenceChunk]:
         return self.kb.sparse.search(query=query, top_k=top_k, filter_metadata=filter_metadata)
 
@@ -62,7 +64,8 @@ class HybridRetrievalTool(BaseTool):
         self,
         query: str,
         top_k: int = 5,
-        filter_metadata: Optional[Dict[str, Any]] = None
+        filter_metadata: Optional[Dict[str, Any]] = None,
+        **kwargs
     ) -> List[EvidenceChunk]:
         return self.kb.hybrid.search(query=query, top_k=top_k, filter_metadata=filter_metadata)
 
@@ -84,7 +87,8 @@ class MetadataSearchTool(BaseTool):
         category: Optional[str] = None,
         source_file: Optional[str] = None,
         custom_filters: Optional[Dict[str, Any]] = None,
-        top_k: int = 5
+        top_k: int = 5,
+        **kwargs
     ) -> List[EvidenceChunk]:
         return self.kb.metadata.search(
             doc_id=doc_id,
@@ -110,10 +114,14 @@ class MultiQueryRetrievalTool(BaseTool):
         self,
         subqueries: List[str],
         top_k_per_query: int = 3,
-        filter_metadata: Optional[Dict[str, Any]] = None
+        filter_metadata: Optional[Dict[str, Any]] = None,
+        **kwargs
     ) -> List[EvidenceChunk]:
+        cancel_token = kwargs.get("cancel_token")
         all_hits: Dict[str, EvidenceChunk] = {}
         for sq in subqueries:
+            if cancel_token and cancel_token.is_set():
+                break
             hits = self.kb.hybrid.search(query=sq, top_k=top_k_per_query, filter_metadata=filter_metadata)
             for h in hits:
                 if h.chunk_id not in all_hits or h.score > all_hits[h.chunk_id].score:
@@ -147,9 +155,14 @@ class RerankEvidenceTool(BaseTool):
         self,
         query: str,
         candidates: List[EvidenceChunk],
-        top_k: int = 5
+        top_k: int = 5,
+        **kwargs
     ) -> List[EvidenceChunk]:
         if not candidates:
+            return []
+
+        cancel_token = kwargs.get("cancel_token")
+        if cancel_token and cancel_token.is_set():
             return []
 
         # Neural Cross-Encoder scoring if available

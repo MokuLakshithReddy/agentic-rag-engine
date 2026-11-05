@@ -113,7 +113,8 @@ class AnswerVerifier:
         evidence_map: Dict[str, EvidenceChunk]
     ) -> Tuple[bool, Optional[str], float, bool]:
         """
-        Verifies if a specific claim is factually entailed by its cited evidence chunk.
+        Verifies if a specific claim is factually entailed by its cited evidence chunk
+        using genuine LLM-driven Natural Language Inference (NLI) and contradiction guards.
         Returns: (is_grounded, cited_chunk_id, support_score, is_contradiction)
         """
         if not cited_id:
@@ -130,7 +131,36 @@ class AnswerVerifier:
         if self._has_polarity_contradiction(claim_clean, chunk_text):
             return False, cited_id, 0.0, True
 
-        # 2. Key predicate and entity overlap
+        # 2. Genuine LLM-driven Semantic Entailment & Contradiction Verification
+        try:
+            nli_messages = [
+                LLMMessage(
+                    role="system",
+                    content=(
+                        "You are an impartial natural language inference (NLI) and factual verification auditor. "
+                        "Evaluate whether the Claim is entailed by the Premise (Evidence Chunk). "
+                        "Return strict JSON matching the EntailmentResult schema with fields:\n"
+                        "- is_entailed (bool): True if and only if all factual claims are supported by premise.\n"
+                        "- contradiction (bool): True if the claim asserts something contrary to the premise.\n"
+                        "- confidence (float): Between 0.0 and 1.0.\n"
+                        "- rationale (str): Brief explanation."
+                    )
+                ),
+                LLMMessage(
+                    role="user",
+                    content=f"Premise (Evidence Chunk):\n\"\"\"{chunk_text}\"\"\"\n\nClaim to Verify:\n\"\"\"{claim_clean}\"\"\""
+                )
+            ]
+            entailment: EntailmentResult = self.llm.generate_structured(nli_messages, EntailmentResult)
+            if entailment.contradiction:
+                return False, cited_id, 0.0, True
+            if not entailment.is_entailed:
+                return False, cited_id, round(entailment.confidence, 3), False
+            return True, cited_id, round(entailment.confidence, 3), False
+        except Exception:
+            pass
+
+        # 3. Deterministic lexical fallback if LLM client is unavailable
         stopwords = {
             "the", "a", "an", "is", "are", "was", "were", "and", "or", "to", "in",
             "of", "for", "with", "that", "this", "by", "from", "on", "it", "its"

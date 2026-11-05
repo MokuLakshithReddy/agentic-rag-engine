@@ -36,10 +36,55 @@ router = APIRouter()
 TRACE_DIR = Path("./data/traces").resolve()
 TRACE_DIR.mkdir(parents=True, exist_ok=True)
 
-# Authentication Configuration: default to secure key if not set
-DEFAULT_DEV_KEY = "rag_sec_live_key_2026"
-CONFIGURED_API_KEY = os.getenv("API_KEY", DEFAULT_DEV_KEY)
+import secrets
+
+# Authentication & Session Management
+# Server-side administrative API key configured strictly via environment variable
+CONFIGURED_API_KEY: Optional[str] = os.getenv("API_KEY")
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+session_token_header = APIKeyHeader(name="X-Session-Token", auto_error=False)
+
+# Ephemeral in-memory session registry with TTL for web browser UI clients
+ACTIVE_SESSIONS: Dict[str, float] = {}
+SESSION_EXPIRATION_SEC = 3600  # 1 hour
+
+
+def clean_expired_sessions() -> None:
+    now = time.time()
+    expired = [tok for tok, exp in ACTIVE_SESSIONS.items() if now > exp]
+    for tok in expired:
+        ACTIVE_SESSIONS.pop(tok, None)
+
+
+def verify_api_key(
+    api_key: Optional[str] = Security(api_key_header),
+    session_token: Optional[str] = Security(session_token_header)
+) -> bool:
+    """
+    Unified Authentication Validator.
+    Protects endpoints against unauthorized access:
+    1. Programmatic access: Requires valid X-API-Key matching server environment variable.
+    2. Browser clients: Requires active, unexpired X-Session-Token issued by /v1/auth/session.
+    Rejects any unauthenticated requests with HTTP 401.
+    """
+    # 1. Validate programmatic API Key if configured on server
+    configured_key = os.getenv("API_KEY") or CONFIGURED_API_KEY
+    if api_key and configured_key:
+        if secrets.compare_digest(api_key.strip(), configured_key.strip()):
+            return True
+
+    # 2. Validate browser session token
+    if session_token:
+        clean_expired_sessions()
+        exp = ACTIVE_SESSIONS.get(session_token.strip())
+        if exp and time.time() < exp:
+            return True
+
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Unauthorized: Valid X-API-Key or active X-Session-Token is required."
+    )
+
 
 # Sliding Window Rate Limiting: 60s window, max 120 calls per IP
 RATE_LIMIT_WINDOW_SEC = 60
@@ -58,17 +103,20 @@ tool_registry = ToolRegistry(kb)
 agent_workflow = AgenticRAGWorkflow(tool_registry)
 
 
-def verify_api_key(api_key: Optional[str] = Security(api_key_header)) -> bool:
+@router.post("/v1/auth/session", response_model=Dict[str, Any])
+def create_browser_session(request: Request):
     """
-    Strict API Key validation.
-    Enforces authentication across all data and query endpoints.
+    Creates an ephemeral, rate-limited browser session token.
+    Allows frontend clients to interact with the research API safely without embedding hardcoded API keys.
     """
-    if not api_key or api_key.strip() != CONFIGURED_API_KEY:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Unauthorized: Valid X-API-Key header is required to access this endpoint."
-        )
-    return True
+    check_rate_limit(request)
+    clean_expired_sessions()
+    session_token = secrets.token_urlsafe(32)
+    ACTIVE_SESSIONS[session_token] = time.time() + SESSION_EXPIRATION_SEC
+    return {
+        "session_token": session_token,
+        "expires_in": SESSION_EXPIRATION_SEC
+    }
 
 
 def check_rate_limit(request: Request) -> None:

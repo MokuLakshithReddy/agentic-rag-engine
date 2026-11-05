@@ -208,17 +208,111 @@ class DeterministicReasoningLLMClient(BaseLLMClient):
 
         # Handle Subquery Decomposition structured schema
         if "Decomposition" in schema_name or "subqueries" in response_model.model_fields:
-            q = last_msg
-            if "compare" in q.lower() or "difference" in q.lower():
+            q_match = re.search(r"'([^']+)'", last_msg) or re.search(r'"([^"]+)"', last_msg)
+            q = q_match.group(1).strip() if q_match else last_msg.strip()
+
+            # Extract distinct comparison entities
+            comp_match = re.search(
+                r"(?:compare|difference between|versus|vs|trade-offs between)\s+([A-Za-z0-9_\-]+)\s+(?:and|with|to|vs)\s+([A-Za-z0-9_\-]+)",
+                q,
+                re.IGNORECASE
+            )
+            if comp_match:
+                ent1, ent2 = comp_match.group(1), comp_match.group(2)
                 return response_model.model_validate({
                     "subqueries": [
-                        {"query_text": f"{q} overview", "assigned_tool": "hybrid_retrieval"},
-                        {"query_text": f"{q} specific comparison", "assigned_tool": "multi_query_retrieval"}
+                        {"query_text": f"{ent1}", "target_entity": ent1},
+                        {"query_text": f"{ent2}", "target_entity": ent2}
                     ]
                 })
+
+            # Check for detected topics list
+            topics_match = re.search(r"Detected topics:\s*(\[[^\]]+\])", last_msg)
+            if topics_match:
+                try:
+                    import ast
+                    topics = ast.literal_eval(topics_match.group(1))
+                    clean_topics = [t for t in topics if len(t) > 2 and t.lower() not in {"analyze", "this", "compare"}]
+                    if len(clean_topics) >= 2:
+                        return response_model.model_validate({
+                            "subqueries": [
+                                {"query_text": f"{clean_topics[0]}", "target_entity": clean_topics[0]},
+                                {"query_text": f"{clean_topics[1]}", "target_entity": clean_topics[1]}
+                            ]
+                        })
+                except Exception:
+                    pass
+
             return response_model.model_validate({
-                "subqueries": [{"query_text": q, "assigned_tool": "hybrid_retrieval"}]
+                "subqueries": [{"query_text": q, "target_entity": None}]
             })
+
+        # Handle Entailment and Claim Verification structured schema
+        if "Entailment" in schema_name or "is_entailed" in response_model.model_fields:
+            premise_match = re.search(r'Premise \(Evidence Chunk\):\s*"""([\s\S]*?)"""', last_msg)
+            claim_match = re.search(r'Claim to Verify:\s*"""([\s\S]*?)"""', last_msg)
+            premise = premise_match.group(1).strip() if premise_match else ""
+            claim = claim_match.group(1).strip() if claim_match else last_msg
+
+            claim_lower = claim.lower()
+            premise_lower = premise.lower()
+
+            direct_negations = {"not", "never", "no", "cannot", "does not", "doesn't", "is not", "isn't"}
+            claim_has_neg = any(re.search(rf"\b{neg}\b", claim_lower) for neg in direct_negations)
+
+            stopwords = {"the", "a", "an", "is", "are", "was", "were", "to", "in", "of", "and", "or", "for", "with", "that"}
+            claim_words = [w for w in re.findall(r"\b\w+\b", claim_lower) if len(w) > 2 and w not in stopwords and w not in direct_negations]
+
+            if not claim_words:
+                return response_model.model_validate({
+                    "is_entailed": True,
+                    "contradiction": False,
+                    "confidence": 0.85,
+                    "rationale": "Empty or trivial claim accepted."
+                })
+
+            # Check sentence-level alignment for contradiction
+            premise_sentences = re.split(r"(?<=[.!?])\s+", premise_lower)
+            best_sentence = ""
+            best_overlap = 0
+
+            for s in premise_sentences:
+                s_words = set(re.findall(r"\b\w+\b", s))
+                overlap = len(set(claim_words).intersection(s_words))
+                if overlap > best_overlap:
+                    best_overlap = overlap
+                    best_sentence = s
+
+            sentence_has_neg = any(re.search(rf"\b{neg}\b", best_sentence) for neg in direct_negations)
+
+            # Contradiction: high shared vocabulary with inverted negation
+            if best_overlap >= 3 and claim_has_neg != sentence_has_neg:
+                return response_model.model_validate({
+                    "is_entailed": False,
+                    "contradiction": True,
+                    "confidence": 0.95,
+                    "rationale": "Direct polarity negation contradiction detected between claim and premise."
+                })
+
+            # Support coverage
+            premise_all_words = set(re.findall(r"\b\w+\b", premise_lower))
+            supported = sum(1 for w in claim_words if w in premise_all_words or any(w.rstrip('s') in p for p in premise_all_words))
+            ratio = supported / len(claim_words)
+
+            if ratio >= 0.40:
+                return response_model.model_validate({
+                    "is_entailed": True,
+                    "contradiction": False,
+                    "confidence": round(min(1.0, 0.70 + 0.30 * ratio), 3),
+                    "rationale": f"Claim factually entailed by premise with {ratio:.1%} token alignment."
+                })
+            else:
+                return response_model.model_validate({
+                    "is_entailed": False,
+                    "contradiction": False,
+                    "confidence": round(ratio, 3),
+                    "rationale": f"Insufficient factual support in premise ({ratio:.1%} alignment)."
+                })
 
         # Default fallback: instantiate default model
         return response_model.model_construct()

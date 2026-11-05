@@ -36,6 +36,32 @@ class EvidenceEvaluator:
         tokens = re.findall(r"\b\w+\b", text.lower())
         return {t for t in tokens if len(t) > 1 and t not in self.stopwords}
 
+    def _detect_corpus_contradictions(self, evidence: List[EvidenceChunk]) -> bool:
+        """
+        Cross-audits sentences across retrieved evidence chunks.
+        Detects opposing truth claims and negated assertions sharing predicate entities.
+        """
+        direct_negations = {"not", "never", "no", "cannot", "does not", "doesn't", "is not", "isn't"}
+        sentences: List[str] = []
+        for chunk in evidence:
+            s_list = re.split(r"(?<=[.!?])\s+", chunk.content)
+            sentences.extend([s.strip().lower() for s in s_list if len(s.strip()) > 15])
+
+        for i in range(len(sentences)):
+            s1 = sentences[i]
+            s1_words = set(re.findall(r"\b\w+\b", s1)) - self.stopwords - direct_negations
+            s1_has_neg = any(re.search(rf"\b{neg}\b", s1) for neg in direct_negations)
+
+            for j in range(i + 1, len(sentences)):
+                s2 = sentences[j]
+                s2_words = set(re.findall(r"\b\w+\b", s2)) - self.stopwords - direct_negations
+                s2_has_neg = any(re.search(rf"\b{neg}\b", s2) for neg in direct_negations)
+
+                shared = s1_words.intersection(s2_words)
+                if len(shared) >= 3 and s1_has_neg != s2_has_neg:
+                    return True
+        return False
+
     def evaluate(self, state: AgentState) -> Tuple[EvidenceGrading, float, List[str]]:
         """
         Evaluates state.retrieved_evidence across subqueries with rigorous coverage checks.
@@ -60,7 +86,8 @@ class EvidenceEvaluator:
 
             sq_stems = {self._stem(t) for t in sq_tokens}
             sq_covered = False
-            req_overlap = max(1, min(2, len(sq_tokens)))
+            # Rigorous coverage threshold: requires substantive token proportion (>= 45%), not superficial 1-2 token collisions
+            req_overlap = max(2, min(5, int(len(sq_tokens) * 0.45))) if len(sq_tokens) >= 3 else len(sq_tokens)
 
             for chunk in evidence:
                 chunk_tokens = self._tokenize(chunk.content)
@@ -70,20 +97,15 @@ class EvidenceEvaluator:
                 overlap_ratio = len(overlap) / len(sq_tokens)
                 stem_overlap_ratio = len(stem_overlap) / len(sq_stems)
 
-                # Entity match requirement
+                # Entity match requirement (if explicit target entity assigned)
                 if sq.target_entity:
-                    entity_in_chunk = sq.target_entity.lower() in chunk.content.lower()
+                    entity_in_chunk = sq.target_entity.lower() in chunk.content.lower() or sq.target_entity.lower() in chunk.doc_id.lower()
                     if entity_in_chunk and (len(overlap) >= 1 or len(stem_overlap) >= 1):
                         sq_covered = True
                         break
 
-                # Substantive token coverage requirement (exact or stemmed root match)
-                if len(overlap) >= req_overlap or len(stem_overlap) >= req_overlap or stem_overlap_ratio >= 0.40:
-                    sq_covered = True
-                    break
-
-                # Strong relevance score + root overlap
-                if chunk.score >= 0.60 and len(stem_overlap) >= 1:
+                # Substantive token coverage requirement (exact or stemmed root match >= 45%)
+                if (len(overlap) >= req_overlap or len(stem_overlap) >= req_overlap) and stem_overlap_ratio >= 0.45:
                     sq_covered = True
                     break
 
@@ -95,11 +117,8 @@ class EvidenceEvaluator:
 
         coverage_ratio = covered_subqueries / max(1, len(state.subqueries))
 
-        # Check for direct contradictions in evidence corpus
-        has_contradiction = False
-        all_text = " ".join([c.content.lower() for c in evidence])
-        if "is true" in all_text and "is false" in all_text:
-            has_contradiction = True
+        # Check for semantic contradictions in evidence corpus
+        has_contradiction = self._detect_corpus_contradictions(evidence)
 
         # Assign calibrated Grade
         if avg_score < 0.15 or coverage_ratio == 0.0:

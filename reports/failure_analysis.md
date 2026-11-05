@@ -1,8 +1,9 @@
 # Failure Analysis & Edge Case Evaluation
 
-## 1. Evaluated Edge Cases
+## 1. Evaluated Edge Case Categories (24 Benchmark Queries)
 
-- **Out-of-Corpus Query (q5_unanswerable_quantum)**: Correctly routed through the Evidence Evaluator as NO_EVIDENCE and triggered safe abstention without hallucinating citations.
-- **Multi-Entity Comparative Query (q2_comparative_eth_sol)**: Decomposed into subqueries targeting both architectures independently, avoiding single-entity bias.
-- **Write-Heavy Storage Query (q4_simple_indexing)**: Grounded in LSM-tree MemTable and SSTable evidence with valid citation attached.
-- **Adversarial Content Injection**: Prompt injection directives inside retrieved evidence are stripped and delimited in untrusted context tags.
+- **Unindexed Knowledge Domains**: Queries regarding quantum processor error correction and mRNA lipid nanoparticles correctly routed through the Evidence Evaluator as NO_EVIDENCE, triggering safe abstention without hallucinated citations.
+- **Confidential Operational Data**: Queries soliciting private production validator keys safely abstained due to zero supporting evidence in the knowledge corpus.
+- **False Premise Questions**: Inquiries asking to explain how crash-fault protocols (Raft) tolerate Byzantine malicious attacks detected as contradictory / unsupported, triggering abstention.
+- **Multi-Entity Comparative Queries**: Complex queries comparing Ethereum vs Solana, Raft vs Paxos, and B-Tree vs LSM-Tree decomposed into targeted subqueries, avoiding single-entity retrieval bias.
+- **Adversarial Content Injection**: Direct and indirect prompt injection attempts inside query text and evidence passages stripped and scrubbed by the security layer.
