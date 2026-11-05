@@ -193,24 +193,85 @@ def test_process_isolated_tool_hard_timeout_termination():
     assert "timeout" in res["error"].lower() or "hard-killed" in res["error"].lower()
 
 
-def test_neural_nli_entailment_and_contradiction():
+def test_verifier_deterministic_fallback_and_reporting(monkeypatch):
+    """
+    Base installation test:
+    Verifies that when optional neural ML dependencies or model weights are unavailable,
+    the deterministic fallback executes reliably and is explicitly reported in metadata.
+    Does not depend on undeclared ML packages or external network downloads.
+    """
+    clf = NeuralNLIClassifier.get_instance()
+    # Explicitly simulate base/offline environment without neural weights
+    monkeypatch.setattr(clf, "_is_ready", False)
+    monkeypatch.setattr(clf, "model", None)
+
+    verifier = AnswerVerifier(verification_strategy="auto")
+    evidence = EvidenceChunk(
+        chunk_id="raft_paper#chunk_raft_01",
+        doc_id="raft_paper",
+        content="Raft accomplishes consensus via an elected leader who manages log replication."
+    )
+    state = AgentState(
+        original_query="How does Raft manage log replication?",
+        retrieved_evidence=[evidence],
+        evidence_ids=["raft_paper#chunk_raft_01"],
+        evidence_relevance_score=0.95
+    )
+    state.synthesis_draft = "Raft accomplishes consensus through an elected leader managing log replication [raft_paper#chunk_raft_01]."
+
+    _, confidence, status = verifier.verify(state)
+    assert status == ResponseStatus.SUCCESS
+    assert state.verification_metadata.get("strategy") == "auto"
+    assert state.verification_metadata.get("model_used") == "deterministic_lexical_fallback"
+    assert state.verification_metadata.get("claims_evaluated") >= 1
+
+
+def test_heuristic_fallback_entailment_and_contradiction():
+    """
+    Base installation test:
+    Validates calibrated deterministic NLI fallback rules when neural weights are absent.
+    """
     clf = NeuralNLIClassifier.get_instance()
     premise = "Raft uses randomized election timeouts between 150ms and 300ms to elect a cluster leader."
 
-    # Entailment test
+    # Entailment fallback test
+    entail_claim = "Raft utilizes election timeouts to choose a cluster leader."
+    res_entail = clf._heuristic_fallback(premise, entail_claim)
+    assert res_entail["is_entailed"] is True
+    assert res_entail["contradiction"] is False
+
+    # Contradiction fallback test
+    contra_claim = "Raft does not use election timeouts."
+    res_contra = clf._heuristic_fallback(premise, contra_claim)
+    assert res_contra["contradiction"] is True
+    assert res_contra["is_entailed"] is False
+
+
+@pytest.mark.skipif(
+    not getattr(NeuralNLIClassifier.get_instance(), "_is_ready", False),
+    reason="Requires optional 'ml' dependency group (sentence-transformers) and downloaded model weights"
+)
+def test_neural_nli_model_inference_and_metadata_logging():
+    """
+    Neural installation test:
+    Verifies that when the optional 'ml' dependency group is installed, the DeBERTa
+    cross-encoder model loads, performs semantic inference, and reports neural metadata.
+    """
+    clf = NeuralNLIClassifier.get_instance()
+    assert clf._is_ready is True
+    assert clf.model is not None
+
+    premise = "Raft uses randomized election timeouts between 150ms and 300ms to elect a cluster leader."
     entail_claim = "Raft utilizes election timeouts to choose a cluster leader."
     res_entail = clf.classify(premise, entail_claim)
     assert res_entail["is_entailed"] is True
     assert res_entail["contradiction"] is False
 
-    # Contradiction test
     contra_claim = "Raft does not use election timeouts."
     res_contra = clf.classify(premise, contra_claim)
     assert res_contra["contradiction"] is True
     assert res_contra["is_entailed"] is False
 
-
-def test_verifier_explicit_neural_nli_metadata_logging():
     verifier = AnswerVerifier(verification_strategy="neural_nli")
     evidence = EvidenceChunk(
         chunk_id="raft_paper#chunk_raft_01",
@@ -230,30 +291,3 @@ def test_verifier_explicit_neural_nli_metadata_logging():
     assert confidence > 0.60
     assert state.verification_metadata.get("strategy") == "neural_nli"
     assert state.verification_metadata.get("model_used") == "cross-encoder/nli-deberta-v3-small"
-    assert state.verification_metadata.get("claims_evaluated") >= 1
-
-
-def test_verifier_offline_deterministic_fallback_metadata_logging(monkeypatch):
-    clf = NeuralNLIClassifier.get_instance()
-    # Simulate neural model weights unavailable
-    monkeypatch.setattr(clf, "_is_ready", False)
-    monkeypatch.setattr(clf, "model", None)
-
-    verifier = AnswerVerifier(verification_strategy="neural_nli")
-    evidence = EvidenceChunk(
-        chunk_id="raft_paper#chunk_raft_01",
-        doc_id="raft_paper",
-        content="Raft accomplishes consensus via an elected leader who manages log replication."
-    )
-    state = AgentState(
-        original_query="How does Raft manage log replication?",
-        retrieved_evidence=[evidence],
-        evidence_ids=["raft_paper#chunk_raft_01"],
-        evidence_relevance_score=0.95
-    )
-    state.synthesis_draft = "Raft accomplishes consensus through an elected leader managing log replication [raft_paper#chunk_raft_01]."
-
-    _, confidence, status = verifier.verify(state)
-    assert status == ResponseStatus.SUCCESS
-    assert state.verification_metadata.get("strategy") == "neural_nli"
-    assert state.verification_metadata.get("model_used") == "deterministic_lexical_fallback"
