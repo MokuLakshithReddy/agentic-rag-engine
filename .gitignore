@@ -47,6 +47,7 @@ data/*.jsonl
 .coverage
 htmlcov/
 .mypy_cache/
+submission.csv
 
 # OS artifacts
 .DS_Store
