@@ -1,5 +1,8 @@
 # Agentic RAG Engine: Autonomous Multi-Step Knowledge Research System
 
+[![Stars](https://img.shields.io/github/stars/MokuLakshithReddy/agentic-rag-engine?style=flat-square)](https://github.com/MokuLakshithReddy/agentic-rag-engine/stargazers) [![Forks](https://img.shields.io/github/forks/MokuLakshithReddy/agentic-rag-engine?style=flat-square)](https://github.com/MokuLakshithReddy/agentic-rag-engine/forks) [![Open Issues](https://img.shields.io/github/issues/MokuLakshithReddy/agentic-rag-engine?style=flat-square)](https://github.com/MokuLakshithReddy/agentic-rag-engine/issues) [![Last Commit](https://img.shields.io/github/last-commit/MokuLakshithReddy/agentic-rag-engine?style=flat-square)](https://github.com/MokuLakshithReddy/agentic-rag-engine/commits/main)
+
+
 [![License](https://img.shields.io/badge/License-Restricted%20Research%20License-red.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12-blue)](pyproject.toml)
 [![Architecture](https://img.shields.io/badge/Architecture-Stateful%20Agentic%20RAG-indigo)](docs/ARCHITECTURE.md)
