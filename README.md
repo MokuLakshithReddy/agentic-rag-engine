@@ -18,23 +18,32 @@ Production-oriented autonomous knowledge research and evidence-grounded synthesi
 
 **Why it matters:** A retrieval system should know when the available documents do not support an answer. This engine combines multi-step retrieval, explicit evidence grading, citation verification, and bounded abstention so missing or contradictory evidence is surfaced instead of silently filled in.
 
-## Visual architecture
+## Visual workflow: retrieve, evaluate, verify, or abstain
 
 ```mermaid
 flowchart TD
-    Q["User query"] --> A["Query classifier"]
-    A --> P["Subquery decomposition and retrieval planner"]
-    P --> R["Dense, BM25, hybrid and reranked retrieval"]
-    R --> G["Evidence grading and gap detection"]
-    G --> D{"Evidence sufficient?"}
-    D -->|"No, budget remains"| X["Reformulate query<br/>bounded re-retrieval"]
-    X --> P
-    D -->|"Yes or retry budget exhausted"| S["Grounded answer synthesis"]
-    S --> V["Citation and hallucination verifier"]
-    V --> O["Verified answer or explicit abstention"]
+    A["Question"] --> B["Classify intent and decompose subqueries"]
+    B --> C["Hybrid retrieval: dense, BM25 and metadata"]
+    C --> D["Fuse rankings and rerank candidates"]
+    D --> E["Grade evidence and detect gaps"]
+    E --> F{"Evidence sufficient?"}
+    F -->|No, budget remains| G["Bounded query reformulation"]
+    G --> C
+    F -->|No| H["Explicit abstention"]
+    F -->|Yes| I["Grounded synthesis with citations"]
+    I --> J["Citation and entailment verification"]
+    J --> K["Verified response or abstention"]
 ```
 
-**Benchmark context:** The comparative results below are repository-reported measurements on the included evaluation setup. Treat them as evidence for this test corpus and configuration, not as a universal guarantee across arbitrary datasets or models.
+### Published benchmark snapshot
+
+| Architecture | Recall@5 | Abstention accuracy | Mean latency |
+|---|---:|---:|---:|
+| Standard RAG | 1.0000 | 75.0% | 12.66 ms |
+| Optimized RAG | 1.0000 | **91.7%** | 68.39 ms |
+| Agentic RAG | 1.0000 | 58.3% | 471.52 ms |
+
+**Interpretation:** the agentic pipeline achieved full recall on the evaluated corpus, but its measured abstention accuracy (58.3%) was below the optimized baseline (91.7%) and it was slower. The benchmark therefore does **not** establish that agentic orchestration is superior on every axis; improving abstention calibration is an explicit evaluation priority. Results are from the project's 25-document benchmark corpus. See [the full report](reports/performance_report.md), [baseline comparison](reports/baseline_comparison.csv), and [failure analysis](reports/failure_analysis.md).
 
 ---
 ## Architecture Overview
