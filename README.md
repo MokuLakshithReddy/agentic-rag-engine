@@ -9,6 +9,34 @@ Production-oriented autonomous knowledge research and evidence-grounded synthesi
 
 ---
 
+## At a glance
+
+![GitHub stars](https://img.shields.io/github/stars/MokuLakshithReddy/agentic-rag-engine?style=flat-square&label=stars)
+![GitHub forks](https://img.shields.io/github/forks/MokuLakshithReddy/agentic-rag-engine?style=flat-square&label=forks)
+![Open issues](https://img.shields.io/github/issues/MokuLakshithReddy/agentic-rag-engine?style=flat-square&label=open%20issues)
+![Last commit](https://img.shields.io/github/last-commit/MokuLakshithReddy/agentic-rag-engine?style=flat-square)
+
+**Why it matters:** A retrieval system should know when the available documents do not support an answer. This engine combines multi-step retrieval, explicit evidence grading, citation verification, and bounded abstention so missing or contradictory evidence is surfaced instead of silently filled in.
+
+## Visual architecture
+
+```mermaid
+flowchart TD
+    Q["User query"] --> A["Query classifier"]
+    A --> P["Subquery decomposition and retrieval planner"]
+    P --> R["Dense, BM25, hybrid and reranked retrieval"]
+    R --> G["Evidence grading and gap detection"]
+    G --> D{"Evidence sufficient?"}
+    D -->|"No, budget remains"| X["Reformulate query<br/>bounded re-retrieval"]
+    X --> P
+    D -->|"Yes or retry budget exhausted"| S["Grounded answer synthesis"]
+    S --> V["Citation and hallucination verifier"]
+    V --> O["Verified answer or explicit abstention"]
+```
+
+**Benchmark context:** The comparative results below are repository-reported measurements on the included evaluation setup. Treat them as evidence for this test corpus and configuration, not as a universal guarantee across arbitrary datasets or models.
+
+---
 ## Architecture Overview
 
 ```
