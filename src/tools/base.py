@@ -19,8 +19,10 @@ class BaseToolInput(BaseModel):
     top_k: int = Field(default=5, ge=1, le=20)
 
 
-def _process_target_wrapper(queue: multiprocessing.Queue, func: Callable, args: tuple, kwargs: dict) -> None:
+def _process_target_wrapper(queue: Any, func: Callable, args: tuple, kwargs: dict) -> None:
     """Standalone target executed inside a process-isolated worker."""
+    import os
+    os.environ["TOKENIZERS_PARALLELISM"] = "false"
     try:
         res = func(*args, **kwargs)
         queue.put({"success": True, "data": res, "error": None})
@@ -51,7 +53,7 @@ def execute_with_process_isolation(
     if kwargs is None:
         kwargs = {}
 
-    ctx = multiprocessing.get_context()
+    ctx = multiprocessing.get_context("spawn")
     queue = ctx.Queue()
     proc = ctx.Process(target=_process_target_wrapper, args=(queue, func, args, kwargs))
     proc.start()

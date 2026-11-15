@@ -284,9 +284,9 @@ def test_real_retrieval_tool_through_process_pool(tmp_path):
     assert len(res_sparse["data"]) > 0
     assert "leader election" in res_sparse["data"][0].content.lower()
 
-    dense_tool = DenseRetrievalTool(kb=kb, timeout_sec=5.0, process_isolated=True)
+    dense_tool = DenseRetrievalTool(kb=kb, timeout_sec=25.0, process_isolated=True)
     res_dense = dense_tool.run(query="consensus algorithm")
-    assert res_dense["success"] is True
+    assert res_dense["success"] is True, f"Dense tool failed: {res_dense.get('error')}"
     assert len(res_dense["data"]) > 0
     assert "consensus" in res_dense["data"][0].content.lower()
 
