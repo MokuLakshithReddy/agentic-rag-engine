@@ -46,6 +46,8 @@ class DenseRetriever:
     def _load_model(self) -> None:
         if HAS_SENTENCE_TRANSFORMERS:
             try:
+                import os
+                os.environ["TOKENIZERS_PARALLELISM"] = "false"
                 # Load model without crashing if offline
                 self._model = SentenceTransformer(self.model_name)
             except Exception:
