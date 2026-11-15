@@ -5,6 +5,7 @@ and normalized cosine similarity search, with deterministic vector fallback.
 """
 
 from typing import List, Dict, Any, Optional
+import zlib
 import numpy as np
 from src.state.state import EvidenceChunk
 
@@ -27,8 +28,20 @@ class DenseRetriever:
         self.chunks: List[EvidenceChunk] = []
         self.embeddings: Optional[np.ndarray] = None
         self._is_indexed = False
+        self._used_neural_model = False
         self._model = None
         self._load_model()
+
+    def __getstate__(self) -> Dict[str, Any]:
+        """Custom pickler omitting PyTorch model instance to prevent process pool serialization errors."""
+        state = self.__dict__.copy()
+        state["_model"] = None
+        return state
+
+    def __setstate__(self, state: Dict[str, Any]) -> None:
+        """Custom unpickler initializing model reference."""
+        self.__dict__.update(state)
+        self._model = None
 
     def _load_model(self) -> None:
         if HAS_SENTENCE_TRANSFORMERS:
@@ -39,13 +52,13 @@ class DenseRetriever:
                 self._model = None
 
     def _compute_fallback_embeddings(self, texts: List[str]) -> np.ndarray:
-        """Hashed multi-dimensional dense feature representation."""
+        """Deterministic hashed multi-dimensional dense feature representation."""
         dim = 384
         vecs = np.zeros((len(texts), dim), dtype=np.float32)
         for i, text in enumerate(texts):
             words = text.lower().split()
             for w in words:
-                idx = hash(w) % dim
+                idx = zlib.crc32(w.encode("utf-8")) % dim
                 vecs[i, idx] += 1.0
             norm = np.linalg.norm(vecs[i])
             if norm > 0:
@@ -60,6 +73,7 @@ class DenseRetriever:
             self.chunks = []
             self.embeddings = None
             self._is_indexed = False
+            self._used_neural_model = False
             return
 
         self.chunks = list(chunks)
@@ -68,10 +82,13 @@ class DenseRetriever:
         if self._model is not None:
             try:
                 self.embeddings = self._model.encode(corpus, normalize_embeddings=True, show_progress_bar=False)
+                self._used_neural_model = True
             except Exception:
                 self.embeddings = self._compute_fallback_embeddings(corpus)
+                self._used_neural_model = False
         else:
             self.embeddings = self._compute_fallback_embeddings(corpus)
+            self._used_neural_model = False
 
         self._is_indexed = True
 
@@ -92,10 +109,15 @@ class DenseRetriever:
         if not self._is_indexed or self.embeddings is None or not self.chunks:
             return []
 
-        if self._model is not None:
-            try:
-                q_vec = self._model.encode([query], normalize_embeddings=True, show_progress_bar=False)[0]
-            except Exception:
+        if self._used_neural_model:
+            if self._model is None:
+                self._load_model()
+            if self._model is not None:
+                try:
+                    q_vec = self._model.encode([query], normalize_embeddings=True, show_progress_bar=False)[0]
+                except Exception:
+                    q_vec = self._compute_fallback_embeddings([query])[0]
+            else:
                 q_vec = self._compute_fallback_embeddings([query])[0]
         else:
             q_vec = self._compute_fallback_embeddings([query])[0]
